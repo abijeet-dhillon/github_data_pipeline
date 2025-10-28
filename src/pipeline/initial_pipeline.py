@@ -1,22 +1,38 @@
 """
-    initial_pipeline.py
----
-    This file combines the following scripts:
-        1) v3_data_retrieval.py - GitHub V3 data retrieval (issues, PRs, commits, repo meta)
-        2) find_prs_with_linked_issues.py - PRs with linked issues (closes/fixes/resolves + #123 / owner/repo#123)
-        3) cross_project_issue_links.py - Cross-project issue links (owner/repo#123 mentioned in issue bodies/comments)
-        4) commit_diff_retrieval.py - Commit diffs (files changed, additions, deletions, no patches)
+initial_pipeline.py
+-------------------
+A unified GitHub data pipeline that automates the retrieval and linking of repository data
+using the GitHub REST API (v3). This script consolidates multiple data-collection processes
+into a single end-to-end workflow for reproducible, large-scale analysis.
 
-    Output (per repo):
-        output/{owner_repo}/
-            repo_meta.json
-            issues.json
-            pull_requests.json
-            commits.json
-            cross_repo_links.json
-            commit_lineage.json
-            summary_metrics.json 
-    
+Functionality:
+    • Collects repository-level metadata, issues, pull requests, and commits.
+    • Extracts and analyzes commit-level information (SHAs, parents, diffs, file changes).
+    • Detects issue references in PRs and commits (e.g., "closes #123", "fixes org/repo#45").
+    • Identifies cross-repository relationships by scanning issue and PR bodies/comments.
+    • Builds commit lineage structures, linking each commit to its parent SHAs and prior edits.
+    • Aggregates summary metrics describing repository activity and linkage statistics.
+
+Outputs (per repository):
+    output/{owner_repo}/
+        repo_meta.json              – Repository metadata (stars, forks, watchers, open issues)
+        issues.json                 – All issues (open and closed)
+        pull_requests.json          – All pull requests (merged, open, closed)
+        commits.json                – Commit metadata (SHA, author, message, date)
+        prs_with_linked_issues.json – PRs referencing or closing issues
+        issues_closed_by_commits.json – Issues closed directly via commit messages
+        cross_repo_links.json       – Cross-repository links (issues and PRs)
+        commit_lineage.json         – Commit parents, diffs, and file-level lineage
+        summary_metrics.json        – Aggregated metrics summarizing repository activity
+
+Usage:
+    python3 initial_pipeline.py
+    python3 initial_pipeline.py owner/repo [owner2/repo2 ...]
+
+Notes:
+    - Requires a GitHub Personal Access Token with read access to public repositories.
+    - Implements rate-limit detection, exponential backoff, and retry logic for reliability.
+    - Designed for extensibility (future integration with GraphQL v4 or Elasticsearch indexing).
 """
 
 import os, re, json, sys, time, requests
@@ -185,21 +201,15 @@ def extract_issue_refs_detailed(text: str):
 def find_prs_with_linked_issues(owner: str, repo: str,
                                 prs: List[Dict[str, Any]],
                                 local_issues: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
-    """
-    Find PRs that reference issues (closes/fixes/resolves + #123 or owner/repo#123),
-    with author lookups optimized using caching and batching.
-    """
     results: List[Dict[str, Any]] = []
     issue_author_cache: Dict[Tuple[str, int], Optional[str]] = {}
     pr_commits_cache: Dict[int, List[Dict[str, Any]]] = {}
 
-    # --- Pre-fill cache with local issues to avoid extra API calls ---
     if local_issues:
         for i in local_issues:
             issue_author_cache[(f"{owner}/{repo}".lower(), i["number"])] = ((i.get("user") or {}).get("login"))
 
-    # --- Step 1: collect all references first ---
-    all_refs: Dict[int, List[Dict[str, Any]]] = {}  # PR number → list of reference dicts
+    all_refs: Dict[int, List[Dict[str, Any]]] = {}  
     for pr in prs:
         pr_number = pr.get("number")
         title, body = pr.get("title") or "", pr.get("body") or ""
@@ -255,7 +265,6 @@ def find_prs_with_linked_issues(owner: str, repo: str,
                 "created_at": pr.get("created_at") or pr.get("updated_at"),
             }
 
-    # --- Step 2: batch resolve unique referenced issues ---
     unique_refs = {(r["referenced_repo"].lower(), r["issue_number"])
                    for refs in all_refs.values()
                    for r in refs["links"]}
@@ -271,7 +280,6 @@ def find_prs_with_linked_issues(owner: str, repo: str,
                 print(f"[warn] failed to fetch issue {ref_repo}#{issue_num}: {e}")
                 issue_author_cache[(ref_repo, issue_num)] = None
 
-    # --- Step 3: attach issue authors to each PR reference ---
     for pr_number, info in all_refs.items():
         for ref in info["links"]:
             key = (ref["referenced_repo"].lower(), ref["issue_number"])
@@ -291,7 +299,7 @@ def find_prs_with_linked_issues(owner: str, repo: str,
 
 def find_issues_closed_by_repo_commits(owner: str, repo: str, commits: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     results = []
-    issue_author_cache: Dict[Tuple[str, int], Optional[str]] = {}  # (repo, issue_number) -> issue_author
+    issue_author_cache: Dict[Tuple[str, int], Optional[str]] = {} 
 
     for c in commits:
         msg = ((c.get("commit") or {}).get("message")) or ""
@@ -299,10 +307,8 @@ def find_issues_closed_by_repo_commits(owner: str, repo: str, commits: List[Dict
             continue
 
         commit_author = None
-        # prefer GitHub user login if available
         if c.get("author") and isinstance(c["author"], dict):
             commit_author = c["author"].get("login")
-        # fallback to commit metadata author name
         if not commit_author:
             commit_author = ((c.get("commit") or {}).get("author") or {}).get("name")
 
@@ -315,7 +321,6 @@ def find_issues_closed_by_repo_commits(owner: str, repo: str, commits: List[Dict
             issue_num = ref["number"]
             issue_key = (ref_repo.lower(), issue_num)
 
-            # cache issue author to minimize API calls
             if issue_key in issue_author_cache:
                 issue_author = issue_author_cache[issue_key]
             else:
@@ -346,7 +351,6 @@ def _parse_full_repo(full_repo: str) -> Tuple[str, str]:
     return owner.strip(), repo.strip()
 
 def get_issue_or_pr_details(owner: str, repo: str, number: int) -> dict:
-    # Issues API returns both issues and PRs; PRs have 'pull_request' key.
     url = f"{BASE_URL}/repos/{owner}/{repo}/issues/{number}"
     resp = _request("GET", url)
     return resp.json() if resp.status_code == 200 else {}
@@ -362,7 +366,6 @@ def _source_text_buckets_for_issue_like(owner: str, repo: str, issue_like: dict)
     yield ("issue_title", title, created_at)
     yield ("issue_body", body, created_at)
 
-    # pull regular issue comments for both issues and PRs
     comments = get_issue_comments(owner, repo, number)
     for c in comments:
         yield ("issue_comment", c.get("body") or "", c.get("created_at") or c.get("updated_at") or created_at)
@@ -390,54 +393,49 @@ def find_cross_project_links_issues_and_prs(owner: str, repo: str, issues: List[
         source_url = source.get("html_url")
         source_created_at = source.get("created_at") or source.get("updated_at")
 
-        # Extract all text sources: title, body, and comments
         for where, text, seen_at in _source_text_buckets_for_issue_like(owner, repo, source):
             if not text:
                 continue
 
-            # Find all cross-repo references (e.g. org/repo#123)
             for m in CROSS_REPO_RE.finditer(text):
                 target_full = m.group(1)
                 target_num = int(m.group(2))
                 if target_full.lower() == this_repo_full:
-                    continue  # skip same-repo references
+                    continue  
 
                 tgt_owner, tgt_repo = _parse_full_repo(target_full)
                 cache_key = (target_full.lower(), target_num)
 
-                # cache to avoid refetching same issue multiple times
                 if cache_key in target_cache:
                     target_details = target_cache[cache_key]
                 else:
                     target_details = get_issue_or_pr_details(tgt_owner, tgt_repo, target_num)
                     target_cache[cache_key] = target_details
 
-                # Classify and extract metadata
                 target_type = classify_issue_or_pr(target_details)
                 target_created_at = target_details.get("created_at") or target_details.get("updated_at")
                 target_url = target_details.get("html_url")
                 target_author = ((target_details.get("user") or {}).get("login")) if target_details else None
 
-                # Compose full record with timestamps
                 results.append({
                     "source": {
                         "repo": f"{owner}/{repo}",
-                        "type": source_type,          # "issue" | "pull_request"
+                        "type": source_type,         
                         "number": source_number,
                         "url": source_url,
-                        "created_at": source_created_at,  # when source issue/PR was created
+                        "created_at": source_created_at, 
                     },
                     "reference": {
-                        "found_in": where,            # "issue_title" | "issue_body" | "issue_comment"
-                        "seen_at": seen_at,           # when cross-reference text appeared
-                        "cross_ref_timestamp": seen_at,  # explicit alias for clarity
+                        "found_in": where,            
+                        "seen_at": seen_at,           
+                        "cross_ref_timestamp": seen_at,  
                     },
                     "target": {
                         "repo": target_full,
-                        "type": target_type,          # "issue" | "pull_request"
+                        "type": target_type,         
                         "number": target_num,
                         "url": target_url,
-                        "created_at": target_created_at,  # when target issue/PR was created
+                        "created_at": target_created_at, 
                         "author": target_author,
                     },
                 })
@@ -458,7 +456,6 @@ def get_commit_lineage(owner: str, repo: str, commits: List[Dict[str, Any]], max
         if not sha:
             continue
 
-        # --- reuse cached commit detail if available ---
         detail = commit_cache.get(sha)
         if not detail:
             detail = get_commit_detail(owner, repo, sha)
@@ -471,14 +468,12 @@ def get_commit_lineage(owner: str, repo: str, commits: List[Dict[str, Any]], max
         files = detail.get("files", []) or []
 
         unified_files = []
-        # limit expensive previous commit lookups to N files
         processed_files = 0
 
         for f in files:
             fname = f.get("filename")
             status = f.get("status")
             if not fname or status == "added":
-                # skip added files — no previous commit to find
                 unified_files.append({
                     "filename":  fname,
                     "status":    status,
@@ -500,7 +495,6 @@ def get_commit_lineage(owner: str, repo: str, commits: List[Dict[str, Any]], max
                 if cache_key in prev_lookup_cache:
                     prev_commit_info = prev_lookup_cache[cache_key]
                 else:
-                    # query for the previous commit touching this file
                     commits_url = f"{BASE_URL}/repos/{owner}/{repo}/commits"
                     q = f"?path={quote(fname, safe='')}&sha={parent_sha}&per_page=1"
                     resp = _request("GET", commits_url + q)
@@ -557,7 +551,7 @@ def save_json(path: str, data: Any) -> None:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
 def _extract_identity(commit_detail: Dict[str, Any]) -> Dict[str, Any]:
-    gh_author = (commit_detail.get("author") or {})  # has 'login' if mapped
+    gh_author = (commit_detail.get("author") or {}) 
     gh_committer = (commit_detail.get("committer") or {})
 
     meta = (commit_detail.get("commit") or {})
@@ -590,7 +584,7 @@ def summarize_metrics(
     pr_issue_links: List[Dict[str, Any]],
     cross_repo_links: List[Dict[str, Any]],
     commit_lineage: List[Dict[str, Any]],
-    closed_by_commits: Optional[List[Dict[str, Any]]] = None,   # <- NEW
+    closed_by_commits: Optional[List[Dict[str, Any]]] = None,  
 ) -> Dict[str, Any]:
     closed_by_commits = closed_by_commits or []
     num_issues = len(issues)
@@ -599,7 +593,6 @@ def summarize_metrics(
     num_prs_with_links = len(pr_issue_links)
     num_cross_repo_links = len(cross_repo_links)
 
-    # --- aggregates from lineage ---
     total_changed_files = sum(len(c.get("files", []) or []) for c in commit_lineage)
     total_additions = sum(
         sum((f.get("additions") or 0) for f in (c.get("files") or []))
@@ -610,11 +603,9 @@ def summarize_metrics(
         for c in commit_lineage
     )
 
-    # --- repo identity ---
     this_repo_full = f'{repo_meta.get("owner", {}).get("login")}/{repo_meta.get("name")}' if repo_meta else ""
     this_repo_lc = this_repo_full.lower()
 
-    # --- auto-closing metrics (from PR text/commits/merge commits) ---
     auto_links_from_prs_all = sum(
         1
         for pr in pr_issue_links
@@ -629,14 +620,12 @@ def summarize_metrics(
         and (link.get("referenced_repo","").lower() == this_repo_lc)
     )
 
-    # --- auto-closing from direct commits (no PR) ---
     auto_links_from_commits_all = len([x for x in closed_by_commits if x.get("would_auto_close")])
     auto_links_from_commits_local = len([
         x for x in closed_by_commits
         if x.get("would_auto_close") and x.get("referenced_repo","").lower() == this_repo_lc
     ])
 
-    # --- unique auto-closed issues (by (repo, number)) ---
     def _pairs_from_prs():
         for pr in pr_issue_links:
             for link in pr.get("links", []):
@@ -665,8 +654,6 @@ def summarize_metrics(
           "commits": num_commits,
           "prs_with_issue_refs": num_prs_with_links,
           "cross_repo_issue_links": num_cross_repo_links,
-
-          # NEW: auto-closing metrics
           "auto_closing_links_from_prs_all": auto_links_from_prs_all,
           "auto_closing_links_from_prs_local": auto_links_from_prs_local,
           "auto_closing_links_from_commits_all": auto_links_from_commits_all,
@@ -693,47 +680,38 @@ def process_repo(full_name: str) -> None:
 
     print(f"\n=== {owner}/{repo} ===")
 
-    # 1) Repo meta
     print("  fetching repo metadata...")
     repo_meta = get_repo_meta(owner, repo)
     save_json(f"{out_dir}/repo_meta.json", repo_meta)
 
-    # 2) Issues
     print("  fetching issues...")
     issues = get_issues(owner, repo)
     save_json(f"{out_dir}/issues.json", issues)
 
-    # 3) Pull Requests
     print("  fetching pull requests...")
     prs = get_pull_requests(owner, repo)
     save_json(f"{out_dir}/pull_requests.json", prs)
 
-    # 4) Commits
     print("  fetching commits...")
     commits = get_commits(owner, repo)
     save_json(f"{out_dir}/commits.json", commits)
 
-    # 5) PR → Issue references
     print("  fetching prs with issue references...")
     pr_links = find_prs_with_linked_issues(owner, repo, prs)
     save_json(f"{out_dir}/prs_with_linked_issues.json", pr_links)
 
-    # 6) Issues Closed By Commits
     print("  fetching issues closed by repo commits...")
     closed_by_commits = find_issues_closed_by_repo_commits(owner, repo, commits)
     save_json(f"{out_dir}/issues_closed_by_commits.json", closed_by_commits)
 
-    # 7) Cross-Repo references (issues + PRs) with timestamps
     print("  fetching cross-repo references (issues & PRs)...")
     cross_links = find_cross_project_links_issues_and_prs(owner, repo, issues, prs)
     save_json(f"{out_dir}/cross_repo_links.json", cross_links)
 
-    # 8) Commit lineage
     print("  collecting commit lineage...")
     commit_lineage = get_commit_lineage(owner, repo, commits)
     save_json(f"{out_dir}/commit_lineage.json", commit_lineage)
 
-    # 9) Summary
     summary = summarize_metrics(
         repo_meta=repo_meta,
         issues=issues,
@@ -745,7 +723,7 @@ def process_repo(full_name: str) -> None:
         closed_by_commits=closed_by_commits,
     )
     save_json(f"{out_dir}/summary_metrics.json", summary)
-    print(f"  ✅ done → {out_dir}")
+    print(f"    DONE EXTRACTING DATA → {out_dir}")
 
 def main(custom_repos: Optional[List[str]] = None) -> None:
     repos = custom_repos or REPOS
