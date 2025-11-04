@@ -13,26 +13,6 @@ The system was built to collect and analyze open-source software data in a repro
 
 ---
 
-## Project Structure
-github_data_pipeline/
-│
-├── rest_pipeline.py            # Unified data collection script using GitHub REST API (v3)
-├── index_elasticsearch.py      # Indexing and ingestion script for Elasticsearch
-├── blame_sample.py             # Experimental module for commit author tracing (git blame)
-├── tests/                      # Unit tests for pipeline components
-├── output/{owner_repo}         # Repository-specific JSON output files
-│   ├── repo_meta.json
-│   ├── issues.json
-│   ├── pull_requests.json
-│   ├── commits.json
-│   ├── prs_with_linked_issues.json
-│   ├── issues_closed_by_commits.json
-│   └── cross_repo_links.json
-└── README.md                   # Project documentation
-Each generated JSON file includes a universal `"repo_name"` field for consistent reference and indexing.
-
----
-
 ## Objectives
 
 The objectives of this project directly reflect the **learning outcomes** of COSC 448:
