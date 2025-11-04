@@ -1,22 +1,34 @@
 """
 test_rest_pipeline.py
 ---------------------
-Unit tests for rest_pipeline.py.
+Comprehensive unit tests for `rest_pipeline.py`.
 
-Run with:
-    pytest -v --cov=rest_pipeline --cov-report=term-missing
+These tests validate core functionality of the GitHub REST data pipeline,
+including pagination, authentication handling, rate-limit backoff, data retrieval,
+issue and PR linking, and cross-repository reference detection.
+
+Test Coverage:
+    • HTTP request handling and retry logic
+    • Pagination and error responses
+    • Repository metadata, issues, PRs, commits, and comments retrieval
+    • Issue and PR parsing, linkage extraction, and cross-repo references
+    • Utility helpers (JSON save, directory creation, regex extractors)
+    • Orchestration functions (`process_repo`, `main`)
+
+Usage:
+    Run all tests with coverage reporting:
+        pytest -v --cov=rest_pipeline --cov-report=term-missing
 """
+
 
 import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
 import json
 import pytest
 import requests
-from unittest.mock import patch, MagicMock
-
 import rest_pipeline as pipeline
+from unittest.mock import patch, MagicMock
 
 
 # helpers

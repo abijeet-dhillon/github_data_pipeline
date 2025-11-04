@@ -1,3 +1,22 @@
+"""
+blame_sample.py
+----------------
+Fetches and summarizes GitHub `git blame` data for a given file using the GraphQL API.
+
+Functionality:
+    • Queries commit-level blame information for a file on a specific branch or ref.
+    • Aggregates lines and ranges by author to show who contributed which sections.
+    • Handles both `ref` and `object` GraphQL queries for compatibility across repos.
+    • Outputs structured blame data (per author, per line range) to a JSON file.
+    • Prints a formatted console summary of contributors and line ownership.
+
+Usage:
+    - Set `GITHUB_TOKEN`, `OWNER`, `REPO`, and `FILE_PATH` at the top of the file.
+    - Run with: `python3 blame_sample.py`
+    - Output is written to: `output/blame_sample.json` and console
+"""
+
+
 import os, sys, json, datetime as dt, requests
 from collections import Counter, defaultdict
 
@@ -5,11 +24,11 @@ from collections import Counter, defaultdict
 GITHUB_TOKEN = ""    
 OWNER        = "prettier"
 REPO         = "prettier"
-BRANCH          = "main"        
+BRANCH       = "main"        
 FILE_PATH    = "README.md"   
-GRAPHQL_URL = "https://api.github.com/graphql"
-OUTPUT_DIR  = "output"
-OUTPUT_FILE = os.path.join(OUTPUT_DIR, "blame_sample.json")
+GRAPHQL_URL  = "https://api.github.com/graphql"
+OUTPUT_DIR   = "output"
+OUTPUT_FILE  = os.path.join(OUTPUT_DIR, "blame_sample.json")
 
 
 QUERY_BY_REF = """

@@ -1,17 +1,39 @@
 """
-initial_pipeline.py
--------------------
-A unified GitHub data pipeline that automates the retrieval and linking of repository data
-using the GitHub REST API (v3). This script consolidates multiple data-collection processes
-into a single end-to-end workflow for reproducible, large-scale analysis.
+rest_pipeline.py
+----------------
+A unified GitHub data pipeline that automates the retrieval, parsing, and linking of
+repository data using the GitHub REST API (v3).
 
-TO DO
-    - [x] Research and see if we can add git blame functionality to see who touches the file to initial_pipeline.py.
-    - [x] Refine initial_pipeline.py to include repo_name in each entry of each json file so there is a universal indicator for each entry to search
-    - [x] Add functionality to cycle through GH API tokens when rate limits are hit.
-    - [x] Create tests for initial_pipeline.py (aim for greater than 90% test coverage).
-    - [x] Verify data pulled from initial_pipeline.py.
-    - [x] Update the python file used to index the data into elasticsearch following the new schema from initial_pipeline.py.
+Functionality:
+    • Collects repository metadata, issues, pull requests, commits, and comments.
+    • Extracts and links issues mentioned in PRs, commits, and merge messages.
+    • Identifies cross-repository references (e.g., org/repo#123) across issues and PRs.
+    • Handles rate-limit backoff, token rotation, and request retries for reliability.
+    • Outputs structured JSON datasets for downstream indexing or analysis.
+
+Workflow:
+    1. Fetches and normalizes data for each repository in `REPOS`.
+    2. Writes per-repository JSON outputs into `./output/{owner_repo}/`.
+    3. Each file (e.g., `issues.json`, `commits.json`) represents a unified data view
+       for that repository, suitable for ingestion into Elasticsearch.
+
+Usage:
+    - Configure GitHub API tokens at the top of this file.
+    - Add or modify repositories in the `REPOS` list.
+    - Run:
+          python3 rest_pipeline.py
+    - Optionally provide repository names as CLI arguments:
+          python3 rest_pipeline.py owner/repo another/repo
+
+Outputs (per repository):
+    output/{owner_repo}/
+        ├── repo_meta.json
+        ├── issues.json
+        ├── pull_requests.json
+        ├── commits.json
+        ├── prs_with_linked_issues.json
+        ├── issues_closed_by_commits.json
+        └── cross_repo_links.json
 """
 
 
@@ -25,11 +47,20 @@ from typing import Dict, Any, List, Tuple, Optional
 
 
 # --- configuration ---
-GITHUB_TOKENS = ["", ""]     
+GITHUB_TOKENS      = ["", ""]     
 GITHUB_TOKEN_INDEX = 0
-USER_AGENT = "cosc448-initial-pipeline/1.0 (+abijeet)"
-BASE_URL = "https://api.github.com"
-REPOS = [
+USER_AGENT         = "cosc448-initial-pipeline/1.0 (+abijeet)"
+BASE_URL           = "https://api.github.com"
+PER_PAGE           = 100
+REQUEST_TIMEOUT    = 90
+MAX_RETRIES        = max(6, len(GITHUB_TOKENS) * 2) 
+BACKOFF_BASE_SEC   = 2
+OUTPUT_DIR         = "./output"
+MAX_PAGES_COMMITS  = int(os.getenv("MAX_PAGES_COMMITS", "0"))  # 0 = no cap
+MAX_WAIT_ON_403    = int(os.getenv("MAX_WAIT_ON_403", "180"))
+ISSUE_DETAIL_CACHE = {}
+COMMIT_CACHE       = {}
+REPOS              = [
     # "micromatch/micromatch",
     # "laravel-mix/laravel-mix",
     # "standard/standard",
@@ -46,15 +77,6 @@ REPOS = [
     "django/django",
     "pandas-dev/pandas"
 ]
-PER_PAGE = 100
-REQUEST_TIMEOUT = 90
-MAX_RETRIES = max(6, len(GITHUB_TOKENS) * 2) 
-BACKOFF_BASE_SEC = 2
-OUTPUT_DIR = "./output"
-MAX_PAGES_COMMITS = int(os.getenv("MAX_PAGES_COMMITS", "0"))  # 0 = no cap
-MAX_WAIT_ON_403 = int(os.getenv("MAX_WAIT_ON_403", "180"))
-ISSUE_DETAIL_CACHE = {}
-COMMIT_CACHE = {}
 
 
 # --- https setup ---

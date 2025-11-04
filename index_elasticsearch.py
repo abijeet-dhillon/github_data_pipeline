@@ -1,3 +1,32 @@
+"""
+index_elasticsearch.py
+----------------------
+Indexes structured GitHub data from `rest_pipeline.py` into an Elasticsearch instance for querying and analysis.
+
+Functionality:
+    • Scans all per-repository output folders (e.g., `output/owner_repo/`).
+    • Automatically creates corresponding Elasticsearch indices if missing.
+    • Uses document-type-specific ID functions to generate stable `_id` values.
+    • Supports both API key and basic authentication, with optional TLS verification.
+    • Allows dry-run mode to parse files without uploading to Elasticsearch.
+    • Processes all major JSON outputs: commits, issues, pull requests, links, etc.
+
+Usage:
+    1. Set your Elasticsearch credentials and URL in the hardcoded section at the top
+       (or override via CLI flags if HARDLOCK is disabled).
+    2. Ensure the data directory (default: `./output/`) contains the exported JSON files.
+    3. Run:
+           python3 index_elasticsearch.py
+    4. Optionally add flags:
+           --dry-run          # parse but do not upload
+           --prefix cosc448_  # add prefix to index names
+
+Output:
+    Each JSON file is indexed into a dedicated Elasticsearch index, enabling
+    unified search and aggregation over the collected GitHub repository data.
+"""
+
+
 from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -9,9 +38,9 @@ import requests
 import argparse
 
 
-HARDLOCK = True  # if True, force the hardcoded values below
-HARDCODED_DATA_DIR = "./output"                
-HARDCODED_ES_URL = "http://localhost:9200"     
+HARDLOCK              = True  # if True, force the hardcoded values below
+HARDCODED_DATA_DIR    = "./output"                
+HARDCODED_ES_URL      = "http://localhost:9200"     
 HARDCODED_ES_USERNAME = None               
 HARDCODED_ES_PASSWORD = None             
 HARDCODED_ES_API_KEY  = "" # ONLY PUT IN API KEY
