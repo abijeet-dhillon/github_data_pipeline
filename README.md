@@ -140,7 +140,7 @@ By maintaining clear documentation, consistent naming, and structured commits, t
 ## Authors
 
 **Abijeet Dhillon**  
-UBC Okanagan – COSC 448: Direct Studies  
+UBC Okanagan – COSC 448: Directed Studies  
 Instructor: Dr. Gema Rodríguez-Pérez  
 Email: gema.rodriguezperez@ubc.ca
 
