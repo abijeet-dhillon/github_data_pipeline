@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 initial_pipeline.py
 -------------------
@@ -15,14 +16,14 @@ Functionality:
 
 Outputs (per repository):
     output/{owner_repo}/
-        repo_meta.json              – Repository metadata (stars, forks, watchers, open issues)
-        issues.json                 – All issues (open and closed)
-        pull_requests.json          – All pull requests (merged, open, closed)
-        commits.json                – Commit metadata (SHA, author, message, date)
-        prs_with_linked_issues.json – PRs referencing or closing issues
+        repo_meta.json                – Repository metadata (stars, forks, watchers, open issues)
+        issues.json                   – All issues (open and closed)
+        pull_requests.json            – All pull requests (merged, open, closed)
+        commits.json                  – Commit metadata (SHA, author, message, date)
+        prs_with_linked_issues.json   – PRs referencing or closing issues
         issues_closed_by_commits.json – Issues closed directly via commit messages
-        cross_repo_links.json       – Cross-repository links (issues and PRs)
-        summary_metrics.json        – Aggregated metrics summarizing repository activity
+        cross_repo_links.json         – Cross-repository links (issues and PRs)
+        summary_metrics.json          – Aggregated metrics summarizing repository activity
 
 Usage:
     python3 initial_pipeline.py
@@ -39,98 +40,167 @@ TO DO
     - [x] Add functionality to cycle through GH API tokens when rate limits are hit.
     - [x] Create tests for initial_pipeline.py (aim for greater than 90% test coverage).
     - [x] Verify data pulled from initial_pipeline.py.
-    - [ ] Update the python file used to index the data into elasticsearch following the new schema from initial_pipeline.py.
+    - [x] Update the python file used to index the data into elasticsearch following the new schema from initial_pipeline.py.
 """
 
-import os, re, json, sys, time, requests
-from datetime import datetime, timezone
+import os
+import re
+import json
+import sys
+import time
 from typing import Dict, Any, List, Tuple, Optional
-from urllib.parse import quote
+
+import requests
 
 # --- Configuration ---
-GITHUB_TOKENS = ["redacted"]
+GITHUB_TOKENS = ["", ""]        # <-- fill in your tokens or leave blanks for anonymous
 GITHUB_TOKEN_INDEX = 0
-TOKEN_COUNTER = 0
 USER_AGENT = "cosc448-initial-pipeline/1.0 (+abijeet)"
 BASE_URL = "https://api.github.com"
 REPOS = [
-    "carsondrobe/fellas"
-    # "rollup/rollup"
-    # "prettier/prettier", 
-    # "micromatch/micromatch", 
-    # "standard", 
-    # "nyc", 
-    # "laravel-mix", 
-    # "redux", 
-    # "axios"
+    # "micromatch/micromatch",
+    # "laravel-mix/laravel-mix",
+    # "standard/standard",
+    # "istanbuljs/nyc",
+    # "reduxjs/redux",
+    # "axios/axios",
+    # "rollup/rollup",
+    # "prettier/prettier",
+    "numpy/numpy",
+    "flutter/flutter",
+    "apache/spark",
+    "torvalds/linux",
+    "grafana/grafana",
+    "django/django",
+    "pandas-dev/pandas"
 ]
 PER_PAGE = 100
-REQUEST_TIMEOUT = 30
-MAX_RETRIES = len(GITHUB_TOKENS) * 2
+REQUEST_TIMEOUT = 90
+MAX_RETRIES = max(6, len(GITHUB_TOKENS) * 2)  # floor for flaky networks
 BACKOFF_BASE_SEC = 2
 OUTPUT_DIR = "./output"
+MAX_PAGES_COMMITS = int(os.getenv("MAX_PAGES_COMMITS", "0"))  # 0 = no cap; set e.g. 50 for safety on huge repos
+MAX_WAIT_ON_403 = int(os.getenv("MAX_WAIT_ON_403", "180"))  # seconds
+ISSUE_DETAIL_CACHE = {}
+COMMIT_CACHE = {}
 
 # --- HTTP Setup ---
 SESSION = requests.Session()
 SESSION.headers.update({
-    "Authorization": f"token {GITHUB_TOKENS[0]}",
     "Accept": "application/vnd.github.v3+json",
     "User-Agent": USER_AGENT,
 })
+if GITHUB_TOKENS and GITHUB_TOKENS[0]:
+    SESSION.headers["Authorization"] = f"token {GITHUB_TOKENS[0]}"
 
 # --- Sleep ---
-def _sleep_with_jitter(base: float) -> None:
+def sleep_with_jitter(base: float) -> None:
     jitter = base * 0.25 * (0.5 - (os.urandom(1)[0] / 255.0))
     time.sleep(max(0.0, base + jitter))
 
+# --- Error logging helper ---
+def _log_http_error(resp: requests.Response, url: str) -> None:
+    try:
+        body = resp.json()
+    except Exception:
+        body = {"text": (resp.text or "")[:300]}
+    msg = body.get("message") or body.get("error") or body.get("text")
+    print(f"[error] HTTP {resp.status_code} for {url}\n  -> {msg}")
+
+# --- Auth header helpers ---
+def _set_auth_header_for_current_token() -> None:
+    """Set or clear SESSION Authorization header for the current token index."""
+    token = None
+    try:
+        token = GITHUB_TOKENS[GITHUB_TOKEN_INDEX]
+    except Exception:
+        pass
+
+    if token:
+        SESSION.headers["Authorization"] = f"token {token}"
+    else:
+        SESSION.headers.pop("Authorization", None)
+
+def _switch_to_next_token() -> bool:
+    """Advance to the next token if available; return True if switched."""
+    global GITHUB_TOKEN_INDEX
+    if "GITHUB_TOKENS" in globals() and GITHUB_TOKENS and (GITHUB_TOKEN_INDEX + 1) < len(GITHUB_TOKENS):
+        GITHUB_TOKEN_INDEX += 1
+        _set_auth_header_for_current_token()
+        print(f"[rate-limit] switched to token {GITHUB_TOKEN_INDEX+1}/{len(GITHUB_TOKENS)}")
+        return True
+    return False
+
 # --- HTTP Request ---
-def _request(method: str, url: str) -> requests.Response:
-    """ HTTP request with retry and rate limit handling. """
+def _request(method: str, url: str, **kwargs) -> requests.Response:
+    if "Authorization" not in getattr(SESSION, "headers", {}):
+        _set_auth_header_for_current_token()
+
+    timeout = kwargs.pop("timeout", REQUEST_TIMEOUT)
+    last_exc = None
+    TERMINAL_4XX = {400, 404, 410, 422}
+
     for attempt in range(1, MAX_RETRIES + 1):
-        try:   
-            resp = SESSION.request(method, url, timeout=REQUEST_TIMEOUT)
-            if resp.status_code == 403:
-                reset = resp.headers.get("X-RateLimit-Reset")
-                if reset and reset.isdigit():
-                    if TOKEN_COUNTER < len(GITHUB_TOKENS):
-                        GITHUB_TOKEN_INDEX += 1
-                        tokens_left = len(GITHUB_TOKENS) - GITHUB_TOKEN_INDEX
-                        print(f"Switching to GITHUB TOKEN {GITHUB_TOKEN_INDEX}.\nThere are {tokens_left} tokens left.")
-                        SESSION.headers.update({
-                            "Authorization": f"token {GITHUB_TOKENS[GITHUB_TOKEN_INDEX]}",
-                            "Accept": "application/vnd.github.v3+json",
-                            "User-Agent": USER_AGENT,
-                        })
-                    else:
-                        reset_ts = int(reset)
-                        wait_sec = max(0, reset_ts - int(time.time())) + 5
-                        print(f"[rate-limit] waiting {wait_sec}s until reset...")
-                        time.sleep(wait_sec)
-                        continue
-                retry_after = resp.headers.get("Retry-After")
-                if retry_after and retry_after.isdigit():
-                    time.sleep(int(retry_after) + 1)
-                    continue
-                msg = (resp.json().get("message") or "").lower() if resp.headers.get("content-type","").startswith("application/json") else ""
-                if "abuse detection" in msg:
-                    backoff = BACKOFF_BASE_SEC * 2
-                    print(f"[abuse-detect] backing off {backoff:.1f}s...")
-                    _sleep_with_jitter(backoff)
-                    continue
-            if resp.status_code in (500, 502, 503, 504):
-                raise requests.RequestException(f"Server error {resp.status_code}")
-            return resp
+        try:
+            resp = SESSION.request(method, url, timeout=timeout, **kwargs)
         except requests.RequestException as e:
-            if attempt == MAX_RETRIES:
-                raise
-            backoff = BACKOFF_BASE_SEC * (2 ** (attempt - 1))
-            print(f"[retry {attempt}/{MAX_RETRIES}] {e} -> sleep {backoff:.1f}s")
-            _sleep_with_jitter(backoff)
-    raise RuntimeError("Exceeded max retries")
+            delay = BACKOFF_BASE_SEC * (2 ** (attempt - 1))
+            print(f"[retry {attempt}/{MAX_RETRIES}] {e} -> sleep {delay:.1f}s")
+            sleep_with_jitter(delay)
+            last_exc = e
+            continue
+
+        if 200 <= resp.status_code < 300:
+            return resp
+
+        if resp.status_code == 401:
+            if _switch_to_next_token():
+                continue
+            _log_http_error(resp, url)
+            return resp
+
+        if resp.status_code in (403, 429):
+            headers = resp.headers or {}
+            remaining = headers.get("X-RateLimit-Remaining")
+            reset = headers.get("X-RateLimit-Reset")
+            retry_after = headers.get("Retry-After")
+            is_rate_limited = (remaining == "0") or (reset and str(reset).isdigit())
+            has_retry_after = retry_after and str(retry_after).isdigit()
+
+            if is_rate_limited and _switch_to_next_token():
+                continue
+
+            if has_retry_after:
+                wait_sec = int(retry_after)
+            elif reset and str(reset).isdigit():
+                wait_sec = max(0, int(reset) - int(time.time())) + 1
+            else:
+                wait_sec = BACKOFF_BASE_SEC * (2 ** (attempt - 1))
+
+            wait_sec = min(wait_sec, MAX_WAIT_ON_403)
+            print(f"[backoff {resp.status_code}] waiting {wait_sec}s for {url}")
+            sleep_with_jitter(wait_sec)
+            continue
+
+        if resp.status_code in TERMINAL_4XX:
+            _log_http_error(resp, url)
+            return resp
+
+        if attempt < MAX_RETRIES:
+            delay = BACKOFF_BASE_SEC * (2 ** (attempt - 1))
+            print(f"[retry {attempt}/{MAX_RETRIES}] HTTP {resp.status_code} -> sleep {delay:.1f}s")
+            sleep_with_jitter(delay)
+            continue
+
+        return resp
+
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("Request failed after retries.")
 
 # --- Get Info For URL ---
-def _paged_get(url: str, owner: str, repo: str) -> List[Dict[str, Any]]:
-    """ Automatically retrieve all pages until API returns empty results. """
+def _paged_get(url: str, owner: str, repo: str, *, max_pages: int = 0) -> List[Dict[str, Any]]:
+    """Automatically retrieve all pages until API returns empty results (or max_pages is hit)."""
     results: List[Dict[str, Any]] = []
     page = 1
     while True:
@@ -138,28 +208,41 @@ def _paged_get(url: str, owner: str, repo: str) -> List[Dict[str, Any]]:
         page_url = f"{url}{sep}per_page={PER_PAGE}&page={page}"
         resp = _request("GET", page_url)
         if resp.status_code != 200:
-            print(f"[warn] {page_url} → {resp.status_code}")
+            try:
+                err = resp.json().get("message")
+            except Exception:
+                err = (resp.text or "")[:200]
+            print(f"[warn] {page_url} → {resp.status_code} :: {err}")
             break
+
         batch = resp.json()
         if not isinstance(batch, list) or not batch:
             break
-        for entry in batch: 
+
+        for entry in batch:
             entry["repo_name"] = f"{owner}/{repo}"
         results.extend(batch)
+
         if len(batch) < PER_PAGE:
+            break
+        if max_pages and page >= max_pages:
+            print(f"[info] hit max_pages={max_pages} on {url}")
             break
         page += 1
     return results
 
-# --- Data Retrieval URLs---
+# --- Data Retrieval URLs ---
 def get_repo_meta(owner: str, repo: str) -> Dict[str, Any]:
     url = f"{BASE_URL}/repos/{owner}/{repo}"
     resp = _request("GET", url)
     if resp.status_code == 200:
         data = resp.json()
-        data["repo_name"] = data.pop("full_name")
+        if "full_name" in data:
+            data["repo_name"] = data.pop("full_name")
+        else:
+            data["repo_name"] = f"{owner}/{repo}"
     else:
-        data = {}
+        data = {"repo_name": f"{owner}/{repo}"}
     return data
 
 def get_issues(owner: str, repo: str) -> List[Dict[str, Any]]:
@@ -173,24 +256,32 @@ def get_pull_requests(owner: str, repo: str) -> List[Dict[str, Any]]:
 
 def get_commits(owner: str, repo: str) -> List[Dict[str, Any]]:
     url = f"{BASE_URL}/repos/{owner}/{repo}/commits"
-    return _paged_get(url, owner, repo)
+    return _paged_get(url, owner, repo, max_pages=MAX_PAGES_COMMITS)
 
 def get_issue_comments(owner: str, repo: str, issue_number: int) -> List[Dict[str, Any]]:
     url = f"{BASE_URL}/repos/{owner}/{repo}/issues/{issue_number}/comments"
     return _paged_get(url, owner, repo)
 
-def get_commit_detail(owner: str, repo: str, sha: str) -> Dict[str, Any]:
-    url = f"{BASE_URL}/repos/{owner}/{repo}/commits/{sha}"
-    resp = _request("GET", url)
-    return resp.json() if resp.status_code == 200 else {}
+def get_commit_detail(owner, repo, sha):
+    key = f"{owner}/{repo}@{sha}"
+    if key in COMMIT_CACHE:
+        return COMMIT_CACHE[key]
+    resp = _request("GET", f"{BASE_URL}/repos/{owner}/{repo}/commits/{sha}")
+    if resp.status_code == 200:
+        data = resp.json()
+    elif resp.status_code == 422:
+        data = {"error": "invalid_sha"}
+    else:
+        data = {}
+    COMMIT_CACHE[key] = data
+    return data
 
-def get_pr_commits(owner: str, repo: str, number: int):
+def get_pr_commits(owner: str, repo: str, number: int) -> List[Dict[str, Any]]:
     url = f"{BASE_URL}/repos/{owner}/{repo}/pulls/{number}/commits"
-    return _paged_get(url, owner, repo) 
+    return _paged_get(url, owner, repo)
 
 def get_commit_message(commit_obj: dict) -> str:
     return ((commit_obj.get("commit") or {}).get("message")) or ""
-
 
 # --- SECTION: Get PRs Linked To Issues ---
 ISSUE_REF_RE = re.compile(
@@ -199,8 +290,8 @@ ISSUE_REF_RE = re.compile(
     flags=re.IGNORECASE
 )
 
-def extract_issue_refs_detailed(text: str):
-    out = []
+def extract_issue_refs_detailed(text: str) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
     if not text:
         return out
 
@@ -223,7 +314,6 @@ def extract_issue_refs_detailed(text: str):
             })
     return out
 
-
 def find_prs_with_linked_issues(owner: str, repo: str,
                                 prs: List[Dict[str, Any]],
                                 local_issues: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
@@ -235,7 +325,7 @@ def find_prs_with_linked_issues(owner: str, repo: str,
         for i in local_issues:
             issue_author_cache[(f"{owner}/{repo}".lower(), i["number"])] = ((i.get("user") or {}).get("login"))
 
-    all_refs: Dict[int, List[Dict[str, Any]]] = {}  
+    all_refs: Dict[int, Dict[str, Any]] = {}
     for pr in prs:
         pr_number = pr.get("number")
         title, body = pr.get("title") or "", pr.get("body") or ""
@@ -259,9 +349,8 @@ def find_prs_with_linked_issues(owner: str, repo: str,
             _add_ref(ref, "pr_text")
 
         # B) PR commit messages (reuse cache)
-        if pr_number in pr_commits_cache:
-            pr_commits = pr_commits_cache[pr_number]
-        else:
+        pr_commits = pr_commits_cache.get(pr_number)
+        if pr_commits is None:
             pr_commits = get_pr_commits(owner, repo, pr_number) or []
             pr_commits_cache[pr_number] = pr_commits
 
@@ -276,6 +365,8 @@ def find_prs_with_linked_issues(owner: str, repo: str,
         merge_sha = pr.get("merge_commit_sha")
         if merge_sha and (not body or len(body) < 10 or "squash" not in body.lower()):
             commit_detail = get_commit_detail(owner, repo, merge_sha)
+            if commit_detail.get("error") == "invalid_sha":
+                continue
             msg = ((commit_detail.get("commit") or {}).get("message")) or ""
             for ref in extract_issue_refs_detailed(msg):
                 _add_ref(ref, "merge_commit_message")
@@ -325,8 +416,8 @@ def find_prs_with_linked_issues(owner: str, repo: str,
     return results
 
 def find_issues_closed_by_repo_commits(owner: str, repo: str, commits: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    results = []
-    issue_author_cache: Dict[Tuple[str, int], Optional[str]] = {} 
+    results: List[Dict[str, Any]] = []
+    issue_author_cache: Dict[Tuple[str, int], Optional[str]] = {}
 
     for c in commits:
         msg = ((c.get("commit") or {}).get("message")) or ""
@@ -359,17 +450,16 @@ def find_issues_closed_by_repo_commits(owner: str, repo: str, commits: List[Dict
                 "repo_name": f"{owner}/{repo}",
                 "commit_sha": c.get("sha"),
                 "commit_url": c.get("html_url"),
-                "commit_author": commit_author,      
+                "commit_author": commit_author,
                 "referenced_repo": ref_repo,
                 "issue_number": issue_num,
-                "issue_author": issue_author,       
+                "issue_author": issue_author,
                 "reference_type": "commit_message",
                 "has_closing_kw": True,
-                "would_auto_close": True,  
+                "would_auto_close": True,
             })
 
     return results
-
 
 # --- SECTION: Cross-Repo References (issues + PRs, with timestamps) ---
 CROSS_REPO_RE = re.compile(r"([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(\d+)", re.IGNORECASE)
@@ -379,9 +469,13 @@ def _parse_full_repo(full_repo: str) -> Tuple[str, str]:
     return owner.strip(), repo.strip()
 
 def get_issue_or_pr_details(owner: str, repo: str, number: int) -> dict:
-    url = f"{BASE_URL}/repos/{owner}/{repo}/issues/{number}"
-    resp = _request("GET", url)
-    return resp.json() if resp.status_code == 200 else {}
+    key = f"{owner}/{repo}#{number}".lower()
+    if key in ISSUE_DETAIL_CACHE:
+        return ISSUE_DETAIL_CACHE[key]
+    resp = _request("GET", f"{BASE_URL}/repos/{owner}/{repo}/issues/{number}")
+    data = resp.json() if resp.status_code == 200 else {}
+    ISSUE_DETAIL_CACHE[key] = data
+    return data
 
 def classify_issue_or_pr(details: dict) -> str:
     return "pull_request" if details and details.get("pull_request") else "issue"
@@ -393,10 +487,6 @@ def _source_text_buckets_for_issue_like(owner: str, repo: str, issue_like: dict)
     body = issue_like.get("body") or ""
     yield ("issue_title", title, created_at)
     yield ("issue_body", body, created_at)
-
-    comments = get_issue_comments(owner, repo, number)
-    for c in comments:
-        yield ("issue_comment", c.get("body") or "", c.get("created_at") or c.get("updated_at") or created_at)
 
 def find_cross_project_links_issues_and_prs(owner: str, repo: str, issues: List[Dict[str, Any]], prs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     results: List[Dict[str, Any]] = []
@@ -429,7 +519,7 @@ def find_cross_project_links_issues_and_prs(owner: str, repo: str, issues: List[
                 target_full = m.group(1)
                 target_num = int(m.group(2))
                 if target_full.lower() == this_repo_full:
-                    continue  
+                    continue
 
                 tgt_owner, tgt_repo = _parse_full_repo(target_full)
                 cache_key = (target_full.lower(), target_num)
@@ -448,22 +538,22 @@ def find_cross_project_links_issues_and_prs(owner: str, repo: str, issues: List[
                 results.append({
                     "source": {
                         "repo_name": f"{owner}/{repo}",
-                        "type": source_type,         
+                        "type": source_type,
                         "number": source_number,
                         "url": source_url,
-                        "created_at": source_created_at, 
+                        "created_at": source_created_at,
                     },
                     "reference": {
-                        "found_in": where,            
-                        "seen_at": seen_at,           
-                        "cross_ref_timestamp": seen_at,  
+                        "found_in": where,
+                        "seen_at": seen_at,
+                        "cross_ref_timestamp": seen_at,
                     },
                     "target": {
                         "repo_name": target_full,
-                        "type": target_type,         
+                        "type": target_type,
                         "number": target_num,
                         "url": target_url,
-                        "created_at": target_created_at, 
+                        "created_at": target_created_at,
                         "author": target_author,
                     },
                 })
