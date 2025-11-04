@@ -1,28 +1,16 @@
-#!/usr/bin/env python3
-"""
-blame_sample_hardcoded.py (full authors + line ranges, JSON output)
-- Uses Commit.blame(path: ...) (Blob doesn't have blame).
-- Writes a JSON report to ./output/blame sample.json with, for each author:
-  - total lines attributed
-  - all line ranges they last modified, with commit/date/message
-
-⚠️ Security: avoid committing real tokens to git.
-"""
-
-import os, sys, json, datetime as dt, textwrap, requests
+import os, sys, json, datetime as dt, requests
 from collections import Counter, defaultdict
 
-# ========= EDIT THESE =========
-GITHUB_TOKEN = ""    # <-- REQUIRED (GraphQL-enabled PAT)
+
+GITHUB_TOKEN = ""    
 OWNER        = "prettier"
 REPO         = "prettier"
-REF          = "main"        # branch, tag, or full SHA (e.g., 'main' or 'b3ad...')
-FILE_PATH    = "README.md"   # path inside the repo
-# ==============================
-
+BRANCH          = "main"        
+FILE_PATH    = "README.md"   
 GRAPHQL_URL = "https://api.github.com/graphql"
 OUTPUT_DIR  = "output"
 OUTPUT_FILE = os.path.join(OUTPUT_DIR, "blame_sample.json")
+
 
 QUERY_BY_REF = """
 query BlameByRef($owner:String!, $name:String!, $qualified:String!, $path:String!) {
@@ -57,6 +45,7 @@ query BlameByRef($owner:String!, $name:String!, $qualified:String!, $path:String
 }
 """
 
+
 QUERY_BY_OBJECT = """
 query BlameByObject($owner:String!, $name:String!, $ref:String!, $path:String!) {
   repository(owner:$owner, name:$name) {
@@ -87,6 +76,7 @@ query BlameByObject($owner:String!, $name:String!, $ref:String!, $path:String!) 
 }
 """
 
+
 def run_query(q: str, variables: dict):
     if not GITHUB_TOKEN or GITHUB_TOKEN.endswith("XXXX"):
         print("ERROR: Set GITHUB_TOKEN at top of file.", file=sys.stderr)
@@ -108,11 +98,14 @@ def run_query(q: str, variables: dict):
         raise RuntimeError(f"GraphQL error: {data['errors'][0]}")
     return data["data"]
 
+
 def short_sha(oid: str) -> str:
     return oid[:7] if oid else "unknown"
 
+
 def one_line(msg: str) -> str:
     return (msg or "").splitlines()[0].strip()
+
 
 def author_key_from_commit_author(author_obj: dict) -> str:
     login = ((author_obj.get("user") or {}).get("login")) or ""
@@ -120,14 +113,8 @@ def author_key_from_commit_author(author_obj: dict) -> str:
     email = author_obj.get("email") or ""
     return login or name or email or "unknown"
 
+
 def summarize_blame(blame_ranges):
-    """
-    Returns:
-      total_lines: int
-      lines_by_author: Counter({author: total_lines})
-      ranges_by_author: dict(author -> list of ranges with commit metadata)
-      examples: up to 5 example ranges (for console preview)
-    """
     lines_by_author = Counter()
     ranges_by_author = defaultdict(list)
     examples, total_lines = [], 0
@@ -164,9 +151,9 @@ def summarize_blame(blame_ranges):
 
     return total_lines, lines_by_author, ranges_by_author, examples
 
+
 def main():
-    # Try ref(qualifiedName) first for branches/tags
-    qualified = REF if REF.startswith("refs/") else f"refs/heads/{REF}"
+    qualified = BRANCH if BRANCH.startswith("refs/") else f"refs/heads/{BRANCH}"
     blame = []
     root_commit_oid = None
 
@@ -181,9 +168,8 @@ def main():
         else:
             raise RuntimeError("Ref did not resolve to a Commit")
     except Exception:
-        # Fallback: object(expression: "<ref>") … on Commit { blame(path: …) }
         data = run_query(QUERY_BY_OBJECT, {
-            "owner": OWNER, "name": REPO, "ref": REF, "path": FILE_PATH
+            "owner": OWNER, "name": REPO, "ref": BRANCH, "path": FILE_PATH
         })
         obj = ((data.get("repository") or {}).get("object") or {})
         if obj.get("__typename") != "Commit":
@@ -198,27 +184,26 @@ def main():
 
     total, by_author, ranges_by_author, examples = summarize_blame(blame)
 
-    # ---- Prepare JSON (all authors + all ranges) ----
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     authors_sorted = sorted(by_author.items(), key=lambda kv: kv[1], reverse=True)
     authors_detail = [
         {
             "author": author,
             "total_lines": lines,
-            "ranges": ranges_by_author[author],  # full list of ranges with commit/date/msg
+            "ranges": ranges_by_author[author],  
         }
         for author, lines in authors_sorted
     ]
 
     doc = {
         "repository": f"{OWNER}/{REPO}",
-        "ref": REF,
+        "ref": BRANCH,
         "file_path": FILE_PATH,
         "root_commit_oid": root_commit_oid,
         "ranges_count": len(blame),
         "total_lines": total,
         "authors": authors_detail,
-        "examples": examples,  # small preview for quick reading
+        "examples": examples, 
         "generated_at": (
             dt.datetime.now(dt.timezone.utc)
             .replace(microsecond=0)
@@ -230,28 +215,30 @@ def main():
         json.dump(doc, f, indent=2, ensure_ascii=False)
 
     print("Done retrieving git blame sample data. View in output/blame_sample.json.")
-    # # ---- Console summary (all authors) ----
-    # print(f"\nRepository : {OWNER}/{REPO}")
-    # print(f"File       : {FILE_PATH} @ {REF}")
-    # print(f"Ranges     : {len(blame)}")
-    # print(f"Lines (sum): {total}")
-    # print(f"Wrote JSON : {OUTPUT_FILE}\n")
 
-    # print("Authors by total lines (all):")
-    # for author, lines in authors_sorted:
-    #     print(f"  {author or 'unknown':<25} {lines:>6}")
+    # ---- Console summary (all authors) ----
+    print(f"\nRepository : {OWNER}/{REPO}")
+    print(f"File       : {FILE_PATH} @ {REF}")
+    print(f"Ranges     : {len(blame)}")
+    print(f"Lines (sum): {total}")
+    print(f"Wrote JSON : {OUTPUT_FILE}\n")
 
-    # print("\nDetailed line ranges per author:")
-    # for author, lines in authors_sorted:
-    #     print(f"\n— {author or 'unknown'} ({lines} lines) —")
-    #     for rg in ranges_by_author[author]:
-    #         date = rg["committed_date"]
-    #         try:
-    #             date = dt.datetime.fromisoformat(date.replace("Z", "+00:00")).strftime("%Y-%m-%d")
-    #         except Exception:
-    #             pass
-    #         sha7 = short_sha(rg["commit_sha"] or "")
-    #         print(f"  lines {rg['start']:>5}-{rg['end']:<5} ({rg['count']:>4})  {sha7}  {date}  {rg['message']}")
+    print("Authors by total lines (all):")
+    for author, lines in authors_sorted:
+        print(f"  {author or 'unknown':<25} {lines:>6}")
+
+    print("\nDetailed line ranges per author:")
+    for author, lines in authors_sorted:
+        print(f"\n— {author or 'unknown'} ({lines} lines) —")
+        for rg in ranges_by_author[author]:
+            date = rg["committed_date"]
+            try:
+                date = dt.datetime.fromisoformat(date.replace("Z", "+00:00")).strftime("%Y-%m-%d")
+            except Exception:
+                pass
+            sha7 = short_sha(rg["commit_sha"] or "")
+            print(f"  lines {rg['start']:>5}-{rg['end']:<5} ({rg['count']:>4})  {sha7}  {date}  {rg['message']}")
+
 
 if __name__ == "__main__":
     main()

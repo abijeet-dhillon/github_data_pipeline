@@ -1,57 +1,27 @@
-#!/usr/bin/env python3
-"""
-index_elasticsearch_reworked_v3.py
----
-
-"""
-
 from __future__ import annotations
-
-import os
-import sys
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 import json
 import time
 import argparse
 import hashlib
-from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
-
 import requests
+import argparse
 
-
-# ---------------------------
-# Config & CLI
-# ---------------------------
-
-"""
-Hardcoded configuration
------------------------
-Per your request, the following values are **hardcoded**. Edit the constants
-below to match your environment. If `HARDLOCK` is True, these values will be
-used regardless of CLI flags or environment variables.
-"""
 
 HARDLOCK = True  # if True, force the hardcoded values below
-
-# >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-# EDIT THESE
-HARDCODED_DATA_DIR = "./output"                 # path to initial_pipeline.py output
-HARDCODED_ES_URL = "http://localhost:9200"      # Elasticsearch base URL
-HARDCODED_ES_USERNAME = None               # Basic auth username (or set to None)
-HARDCODED_ES_PASSWORD = None             # Basic auth password (or set to None)
-HARDCODED_ES_API_KEY  = ""                     # Base64 id:key (use None if not using API Key)
-HARDCODED_VERIFY_TLS  = False                     # Verify TLS certs for https endpoints
-# <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
-
-import argparse
+HARDCODED_DATA_DIR = "./output"                
+HARDCODED_ES_URL = "http://localhost:9200"     
+HARDCODED_ES_USERNAME = None               
+HARDCODED_ES_PASSWORD = None             
+HARDCODED_ES_API_KEY  = "" # ONLY PUT IN API KEY
+HARDCODED_VERIFY_TLS  = False                   
 
 
 def get_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Index initial_pipeline.py outputs into Elasticsearch (hardcoded config)."
     )
-
-    # Keep a few tunables; data-dir/credentials may be ignored if HARDLOCK=True.
     parser.add_argument("--data-dir", default=HARDCODED_DATA_DIR,
                         help="Root folder produced by initial_pipeline.py (hardcoded by default)")
     parser.add_argument("--es-url", default=HARDCODED_ES_URL,
@@ -75,9 +45,6 @@ def get_args() -> argparse.Namespace:
 
     return parser.parse_args()
 
-# ---------------------------
-# Elasticsearch minimal client
-# ---------------------------
 
 class ESClient:
     def __init__(self, base_url: str, username: Optional[str], password: Optional[str],
@@ -92,15 +59,15 @@ class ESClient:
         elif username and password:
             self.session.auth = (username, password)
 
+
     def _url(self, path: str) -> str:
         path = path if path.startswith("/") else f"/{path}"
         return f"{self.base_url}{path}"
 
+
     def ensure_index(self, name: str) -> None:
-        # HEAD /{index}
         r = self.session.head(self._url(name), verify=self.verify)
         if r.status_code == 404:
-            # Create simple, flexible index
             body = {
                 "settings": {"number_of_shards": 1, "number_of_replicas": 0},
                 "mappings": {"dynamic": True}
@@ -109,11 +76,8 @@ class ESClient:
             if cr.status_code >= 300:
                 raise RuntimeError(f"Failed to create index '{name}': {cr.status_code} {cr.text}")
 
+
     def bulk_index(self, index: str, docs: Iterable[Dict[str, Any]], id_func=None, batch_size: int = 1000) -> Tuple[int, int]:
-        """
-        Index documents in batches using the Bulk API.
-        Returns (successful_docs, failed_docs).
-        """
         ok_total = 0
         fail_total = 0
         actions: List[str] = []
@@ -131,14 +95,12 @@ class ESClient:
                                   headers={"Content-Type": "application/x-ndjson"},
                                   verify=self.verify)
             if r.status_code >= 300:
-                # catastrophic; all failed
                 print(f"  ❌ Bulk HTTP {r.status_code}: {r.text[:500]}")
-                fail_total += payload.count("\n") // 2  # two lines per doc
+                fail_total += payload.count("\n") // 2 
                 return
 
             resp = r.json()
             if resp.get("errors"):
-                # count per-item errors
                 for item in resp.get("items", []):
                     meta = item.get("index") or item.get("create") or {}
                     status = meta.get("status", 500)
@@ -146,7 +108,6 @@ class ESClient:
                         ok_total += 1
                     else:
                         fail_total += 1
-                # surface a sample error
                 first_err = next((it for it in resp.get("items", []) if (it.get("index") or {}).get("error")), None)
                 if first_err:
                     print(f"  ⚠️  First item error: {first_err}")
@@ -169,45 +130,40 @@ class ESClient:
         return ok_total, fail_total
 
 
-# ---------------------------
-# Helpers
-# ---------------------------
-
 def stable_hash_id(doc: Dict[str, Any], salt: str = "") -> str:
     raw = json.dumps(doc, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     h = hashlib.sha1((salt + raw).encode("utf-8")).hexdigest()
     return h
 
+
 def folder_repo_name(repo_dir: Path) -> str:
-    # initial_pipeline.py writes to output/{owner}_{repo}
-    # convert back to "owner/repo"
     name = repo_dir.name
     if "_" in name:
         owner, repo = name.split("_", 1)
         return f"{owner}/{repo}"
-    return name.replace("__", "/")  # fallback if user used different joiner
+    return name.replace("__", "/") 
+
 
 def ensure_top_repo_name(doc: Dict[str, Any], repo_name: str) -> None:
     if "repo_name" not in doc or not doc["repo_name"]:
         doc["repo_name"] = repo_name
 
+
 def iter_json(path: Path) -> Iterable[Any]:
     with path.open("r", encoding="utf-8") as f:
         data = json.load(f)
-    # Return a list of docs
     if isinstance(data, list):
         for d in data:
             yield d
     elif isinstance(data, dict):
         yield data
     else:
-        # unknown structure, wrap
         yield {"raw": data}
 
-# ID functions per index
 
 def id_commits(doc: Dict[str, Any]) -> Optional[str]:
     return doc.get("sha") or stable_hash_id(doc, "commit:")
+
 
 def id_pull_requests(doc: Dict[str, Any]) -> Optional[str]:
     rn = doc.get("repo_name")
@@ -216,6 +172,7 @@ def id_pull_requests(doc: Dict[str, Any]) -> Optional[str]:
         return f"{rn}#pr#{num}"
     return stable_hash_id(doc, "pr:")
 
+
 def id_issues(doc: Dict[str, Any]) -> Optional[str]:
     rn = doc.get("repo_name")
     num = doc.get("number")
@@ -223,12 +180,14 @@ def id_issues(doc: Dict[str, Any]) -> Optional[str]:
         return f"{rn}#issue#{num}"
     return stable_hash_id(doc, "issue:")
 
+
 def id_prs_with_linked_issues(doc: Dict[str, Any]) -> Optional[str]:
     rn = doc.get("repo_name")
     num = doc.get("pr_number") or doc.get("number")
     if rn and num is not None:
         return f"{rn}#prlinks#{num}"
     return stable_hash_id(doc, "prlinks:")
+
 
 def id_issues_closed_by_commits(doc: Dict[str, Any]) -> Optional[str]:
     rn = doc.get("repo_name")
@@ -238,18 +197,15 @@ def id_issues_closed_by_commits(doc: Dict[str, Any]) -> Optional[str]:
         return f"{rn}#closed#{issue_num}#{sha}"
     return stable_hash_id(doc, "closed:")
 
+
 def id_repo_meta(doc: Dict[str, Any]) -> Optional[str]:
     rn = doc.get("repo_name")
     return rn or stable_hash_id(doc, "repo_meta:")
 
+
 def id_cross_repo_links(doc: Dict[str, Any]) -> Optional[str]:
-    # Documents here are composite; just hash them
     return stable_hash_id(doc, "xrepo:")
 
-
-# ---------------------------
-# Indexer
-# ---------------------------
 
 FILE_TO_INDEX = {
     "commits.json": ("commits", id_commits),
@@ -261,13 +217,13 @@ FILE_TO_INDEX = {
     "repo_meta.json": ("repo_meta", id_repo_meta),
 }
 
+
 def scan_and_index(es: ESClient, data_dir: Path, index_prefix: str,
                    dry_run: bool = False, batch_size: int = 1000) -> None:
     if not data_dir.exists():
         print(f"Data dir not found: {data_dir}")
         return
 
-    # Create indices if missing
     for _, (idx, _) in FILE_TO_INDEX.items():
         name = f"{index_prefix}{idx}"
         if not dry_run:
@@ -291,8 +247,6 @@ def scan_and_index(es: ESClient, data_dir: Path, index_prefix: str,
         for filename, (idx_base, id_fn) in FILE_TO_INDEX.items():
             path = repo_dir / filename
             if not path.exists():
-                # not all outputs are guaranteed to exist
-                # (e.g., a repo may have no cross-repo links)
                 continue
 
             index_name = f"{index_prefix}{idx_base}"
@@ -300,12 +254,10 @@ def scan_and_index(es: ESClient, data_dir: Path, index_prefix: str,
 
             def docs():
                 for doc in iter_json(path):
-                    # ensure top-level repo_name, even if nested structures exist
                     ensure_top_repo_name(doc, repo_name)
                     yield doc
 
             if dry_run:
-                # consume generator to validate parsability
                 _ = sum(1 for _ in docs())
                 print(f"     (dry-run) OK parsed")
             else:
@@ -321,7 +273,6 @@ def scan_and_index(es: ESClient, data_dir: Path, index_prefix: str,
 def main() -> None:
     args = get_args()
 
-    # Enforce hardcoded settings if requested
     if HARDLOCK:
         args.data_dir = HARDCODED_DATA_DIR
         args.es_url = HARDCODED_ES_URL
@@ -350,4 +301,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

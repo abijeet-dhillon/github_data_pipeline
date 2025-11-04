@@ -1,38 +1,9 @@
-#!/usr/bin/env python3
 """
 initial_pipeline.py
 -------------------
 A unified GitHub data pipeline that automates the retrieval and linking of repository data
 using the GitHub REST API (v3). This script consolidates multiple data-collection processes
 into a single end-to-end workflow for reproducible, large-scale analysis.
-
-Functionality:
-    • Collects repository-level metadata, issues, pull requests, and commits.
-    • Extracts and analyzes commit-level information (SHAs, parents, diffs, file changes).
-    • Detects issue references in PRs and commits (e.g., "closes #123", "fixes org/repo#45").
-    • Identifies cross-repository relationships by scanning issue and PR bodies/comments.
-    • Builds commit lineage structures, linking each commit to its parent SHAs and prior edits.
-    • Aggregates summary metrics describing repository activity and linkage statistics.
-
-Outputs (per repository):
-    output/{owner_repo}/
-        repo_meta.json                – Repository metadata (stars, forks, watchers, open issues)
-        issues.json                   – All issues (open and closed)
-        pull_requests.json            – All pull requests (merged, open, closed)
-        commits.json                  – Commit metadata (SHA, author, message, date)
-        prs_with_linked_issues.json   – PRs referencing or closing issues
-        issues_closed_by_commits.json – Issues closed directly via commit messages
-        cross_repo_links.json         – Cross-repository links (issues and PRs)
-        summary_metrics.json          – Aggregated metrics summarizing repository activity
-
-Usage:
-    python3 initial_pipeline.py
-    python3 initial_pipeline.py owner/repo [owner2/repo2 ...]
-
-Notes:
-    - Requires a GitHub Personal Access Token with read access to public repositories.
-    - Implements rate-limit detection, exponential backoff, and retry logic for reliability.
-    - Designed for extensibility (future integration with GraphQL v4 or Elasticsearch indexing).
 
 TO DO
     - [x] Research and see if we can add git blame functionality to see who touches the file to initial_pipeline.py.
@@ -43,17 +14,18 @@ TO DO
     - [x] Update the python file used to index the data into elasticsearch following the new schema from initial_pipeline.py.
 """
 
+
 import os
 import re
 import json
 import sys
 import time
+import requests
 from typing import Dict, Any, List, Tuple, Optional
 
-import requests
 
-# --- Configuration ---
-GITHUB_TOKENS = ["", ""]        # <-- fill in your tokens or leave blanks for anonymous
+# --- configuration ---
+GITHUB_TOKENS = ["", ""]     
 GITHUB_TOKEN_INDEX = 0
 USER_AGENT = "cosc448-initial-pipeline/1.0 (+abijeet)"
 BASE_URL = "https://api.github.com"
@@ -76,15 +48,16 @@ REPOS = [
 ]
 PER_PAGE = 100
 REQUEST_TIMEOUT = 90
-MAX_RETRIES = max(6, len(GITHUB_TOKENS) * 2)  # floor for flaky networks
+MAX_RETRIES = max(6, len(GITHUB_TOKENS) * 2) 
 BACKOFF_BASE_SEC = 2
 OUTPUT_DIR = "./output"
-MAX_PAGES_COMMITS = int(os.getenv("MAX_PAGES_COMMITS", "0"))  # 0 = no cap; set e.g. 50 for safety on huge repos
-MAX_WAIT_ON_403 = int(os.getenv("MAX_WAIT_ON_403", "180"))  # seconds
+MAX_PAGES_COMMITS = int(os.getenv("MAX_PAGES_COMMITS", "0"))  # 0 = no cap
+MAX_WAIT_ON_403 = int(os.getenv("MAX_WAIT_ON_403", "180"))
 ISSUE_DETAIL_CACHE = {}
 COMMIT_CACHE = {}
 
-# --- HTTP Setup ---
+
+# --- https setup ---
 SESSION = requests.Session()
 SESSION.headers.update({
     "Accept": "application/vnd.github.v3+json",
@@ -93,12 +66,13 @@ SESSION.headers.update({
 if GITHUB_TOKENS and GITHUB_TOKENS[0]:
     SESSION.headers["Authorization"] = f"token {GITHUB_TOKENS[0]}"
 
-# --- Sleep ---
+
+# --- helpers ---
 def sleep_with_jitter(base: float) -> None:
     jitter = base * 0.25 * (0.5 - (os.urandom(1)[0] / 255.0))
     time.sleep(max(0.0, base + jitter))
 
-# --- Error logging helper ---
+
 def _log_http_error(resp: requests.Response, url: str) -> None:
     try:
         body = resp.json()
@@ -107,7 +81,7 @@ def _log_http_error(resp: requests.Response, url: str) -> None:
     msg = body.get("message") or body.get("error") or body.get("text")
     print(f"[error] HTTP {resp.status_code} for {url}\n  -> {msg}")
 
-# --- Auth header helpers ---
+
 def _set_auth_header_for_current_token() -> None:
     """Set or clear SESSION Authorization header for the current token index."""
     token = None
@@ -121,6 +95,7 @@ def _set_auth_header_for_current_token() -> None:
     else:
         SESSION.headers.pop("Authorization", None)
 
+
 def _switch_to_next_token() -> bool:
     """Advance to the next token if available; return True if switched."""
     global GITHUB_TOKEN_INDEX
@@ -131,7 +106,17 @@ def _switch_to_next_token() -> bool:
         return True
     return False
 
-# --- HTTP Request ---
+
+def ensure_dir(p: str) -> None:
+    os.makedirs(p, exist_ok=True)
+
+
+def save_json(path: str, data: Any) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+
+# --- http request ---
 def _request(method: str, url: str, **kwargs) -> requests.Response:
     if "Authorization" not in getattr(SESSION, "headers", {}):
         _set_auth_header_for_current_token()
@@ -198,7 +183,8 @@ def _request(method: str, url: str, **kwargs) -> requests.Response:
         raise last_exc
     raise RuntimeError("Request failed after retries.")
 
-# --- Get Info For URL ---
+
+# --- get info for url ---
 def _paged_get(url: str, owner: str, repo: str, *, max_pages: int = 0) -> List[Dict[str, Any]]:
     """Automatically retrieve all pages until API returns empty results (or max_pages is hit)."""
     results: List[Dict[str, Any]] = []
@@ -231,7 +217,8 @@ def _paged_get(url: str, owner: str, repo: str, *, max_pages: int = 0) -> List[D
         page += 1
     return results
 
-# --- Data Retrieval URLs ---
+
+# --- data retrieval urls ---
 def get_repo_meta(owner: str, repo: str) -> Dict[str, Any]:
     url = f"{BASE_URL}/repos/{owner}/{repo}"
     resp = _request("GET", url)
@@ -245,22 +232,27 @@ def get_repo_meta(owner: str, repo: str) -> Dict[str, Any]:
         data = {"repo_name": f"{owner}/{repo}"}
     return data
 
+
 def get_issues(owner: str, repo: str) -> List[Dict[str, Any]]:
     url = f"{BASE_URL}/repos/{owner}/{repo}/issues?state=all"
     data = _paged_get(url, owner, repo)
     return [i for i in data if "pull_request" not in i]
 
+
 def get_pull_requests(owner: str, repo: str) -> List[Dict[str, Any]]:
     url = f"{BASE_URL}/repos/{owner}/{repo}/pulls?state=all"
     return _paged_get(url, owner, repo)
+
 
 def get_commits(owner: str, repo: str) -> List[Dict[str, Any]]:
     url = f"{BASE_URL}/repos/{owner}/{repo}/commits"
     return _paged_get(url, owner, repo, max_pages=MAX_PAGES_COMMITS)
 
+
 def get_issue_comments(owner: str, repo: str, issue_number: int) -> List[Dict[str, Any]]:
     url = f"{BASE_URL}/repos/{owner}/{repo}/issues/{issue_number}/comments"
     return _paged_get(url, owner, repo)
+
 
 def get_commit_detail(owner, repo, sha):
     key = f"{owner}/{repo}@{sha}"
@@ -276,19 +268,23 @@ def get_commit_detail(owner, repo, sha):
     COMMIT_CACHE[key] = data
     return data
 
+
 def get_pr_commits(owner: str, repo: str, number: int) -> List[Dict[str, Any]]:
     url = f"{BASE_URL}/repos/{owner}/{repo}/pulls/{number}/commits"
     return _paged_get(url, owner, repo)
 
+
 def get_commit_message(commit_obj: dict) -> str:
     return ((commit_obj.get("commit") or {}).get("message")) or ""
 
-# --- SECTION: Get PRs Linked To Issues ---
+
+# --- get prs linked to issues ---
 ISSUE_REF_RE = re.compile(
     r"(?:(?P<kw>close[sd]?|fixe?[sd]?|resolve[sd]?)\s*[:\-–—]*\s+)?"
     r"(?:(?P<full>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(?P<num1>\d+)|#(?P<num2>\d+))",
     flags=re.IGNORECASE
 )
+
 
 def extract_issue_refs_detailed(text: str) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
@@ -313,6 +309,7 @@ def extract_issue_refs_detailed(text: str) -> List[Dict[str, Any]]:
                 "has_closing_kw": has_kw_here,
             })
     return out
+
 
 def find_prs_with_linked_issues(owner: str, repo: str,
                                 prs: List[Dict[str, Any]],
@@ -344,11 +341,11 @@ def find_prs_with_linked_issues(owner: str, repo: str,
                 "would_auto_close": merged and ref["has_closing_kw"],
             })
 
-        # A) PR title/body refs
+        # a) pr title/body refs
         for ref in extract_issue_refs_detailed(f"{title}\n{body}"):
             _add_ref(ref, "pr_text")
 
-        # B) PR commit messages (reuse cache)
+        # b) pr commit messages (reuse cache)
         pr_commits = pr_commits_cache.get(pr_number)
         if pr_commits is None:
             pr_commits = get_pr_commits(owner, repo, pr_number) or []
@@ -361,7 +358,7 @@ def find_prs_with_linked_issues(owner: str, repo: str,
             for ref in extract_issue_refs_detailed(msg):
                 _add_ref(ref, "commit_message")
 
-        # C) Merge commit message (only fetch if different than PR body)
+        # c) merge commit message (only fetch if different than pr body)
         merge_sha = pr.get("merge_commit_sha")
         if merge_sha and (not body or len(body) < 10 or "squash" not in body.lower()):
             commit_detail = get_commit_detail(owner, repo, merge_sha)
@@ -415,6 +412,7 @@ def find_prs_with_linked_issues(owner: str, repo: str,
 
     return results
 
+
 def find_issues_closed_by_repo_commits(owner: str, repo: str, commits: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     results: List[Dict[str, Any]] = []
     issue_author_cache: Dict[Tuple[str, int], Optional[str]] = {}
@@ -461,12 +459,15 @@ def find_issues_closed_by_repo_commits(owner: str, repo: str, commits: List[Dict
 
     return results
 
-# --- SECTION: Cross-Repo References (issues + PRs, with timestamps) ---
+
+# --- cross-repo references (issues + prs, with timestamps) ---
 CROSS_REPO_RE = re.compile(r"([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(\d+)", re.IGNORECASE)
+
 
 def _parse_full_repo(full_repo: str) -> Tuple[str, str]:
     owner, repo = full_repo.split("/", 1)
     return owner.strip(), repo.strip()
+
 
 def get_issue_or_pr_details(owner: str, repo: str, number: int) -> dict:
     key = f"{owner}/{repo}#{number}".lower()
@@ -477,8 +478,10 @@ def get_issue_or_pr_details(owner: str, repo: str, number: int) -> dict:
     ISSUE_DETAIL_CACHE[key] = data
     return data
 
+
 def classify_issue_or_pr(details: dict) -> str:
     return "pull_request" if details and details.get("pull_request") else "issue"
+
 
 def _source_text_buckets_for_issue_like(owner: str, repo: str, issue_like: dict):
     number = issue_like.get("number")
@@ -487,6 +490,7 @@ def _source_text_buckets_for_issue_like(owner: str, repo: str, issue_like: dict)
     body = issue_like.get("body") or ""
     yield ("issue_title", title, created_at)
     yield ("issue_body", body, created_at)
+
 
 def find_cross_project_links_issues_and_prs(owner: str, repo: str, issues: List[Dict[str, Any]], prs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     results: List[Dict[str, Any]] = []
@@ -563,15 +567,8 @@ def find_cross_project_links_issues_and_prs(owner: str, repo: str, issues: List[
 
     return results
 
-# --- Helpers ---
-def ensure_dir(p: str) -> None:
-    os.makedirs(p, exist_ok=True)
 
-def save_json(path: str, data: Any) -> None:
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-
-# --- Main Orchestration ---
+# --- main orchestration ---
 def process_repo(full_name: str) -> None:
     owner, repo = full_name.split("/", 1)
     out_dir = os.path.join(OUTPUT_DIR, f"{owner}_{repo}")
@@ -609,6 +606,7 @@ def process_repo(full_name: str) -> None:
 
     print(f"    DONE EXTRACTING DATA → {out_dir}")
 
+
 def main(custom_repos: Optional[List[str]] = None) -> None:
     repos = custom_repos or REPOS
     if not repos:
@@ -623,6 +621,7 @@ def main(custom_repos: Optional[List[str]] = None) -> None:
         except Exception as e:
             print(f"[error] {r}: {e}")
     print("\nAll repositories processed.")
+
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:
