@@ -128,10 +128,10 @@ pytest -v --cov=rest_pipeline --cov-report=term-missing
 ## Code Quality and Documentation
 
 This project follows the software engineering standards outlined in the COSC 448 syllabus:
-- All scripts are fully documented with descriptive docstrings and inline comments. 
+- All scripts are fully documented with descriptive docstrings and inline comments (where applicable). 
 - Functions and modules follow PEP 8 style guidelines for readability.  
 - Testing and logging are integrated throughout for reliability and traceability.  
-- GitHub issues and pull requests are used to record progress, with clear summaries and rationales for each update.  
+- GitHub issues and pull requests are used to record progress, with clear summaries and rationales for each update (where applicable).  
 
 By maintaining clear documentation, consistent naming, and structured commits, the project meets the expectations for professional, research-grade code in a collaborative academic setting.
 
@@ -140,7 +140,7 @@ By maintaining clear documentation, consistent naming, and structured commits, t
 ## Authors
 
 **Abijeet Dhillon**  
-UBC Okanagan – COSC 448: Direct Studies  
+UBC Okanagan – COSC 448: Directed Studies  
 Instructor: Dr. Gema Rodríguez-Pérez  
 Email: gema.rodriguezperez@ubc.ca
 
