@@ -2,7 +2,7 @@
 """
 index_elasticsearch_with_full_mappings.py
 -----------------------------------------
-Ingests the 7 datasets produced by `rest_pipeline.py` into Elasticsearch,
+Ingests the datasets produced by `rest_pipeline.py` into Elasticsearch,
 creating indices with *full, queryable object mappings* (dynamic: true).
 
 Datasets (per repo folder under ./output/{owner_repo}/):
@@ -13,6 +13,7 @@ Datasets (per repo folder under ./output/{owner_repo}/):
   - prs_with_linked_issues.json   -> index: prs_with_linked_issues
   - issues_closed_by_commits.json -> index: issues_closed_by_commits
   - cross_repo_links.json         -> index: cross_repo_links
+  - repo_blame.json               -> index: repo_blame
 
 Hardcoded configuration is retained (HARDLOCK=True by default).
 
@@ -312,6 +313,9 @@ MAPPINGS: Dict[str, Dict[str, Any]] = {
                 "author": {"type": "object"},     # author.login, id, ...
                 "committer": {"type": "object"},  # committer.login, id, ...
                 "parents": {"type": "object"},
+                "files_changed": {"type": "keyword"},
+                "files_changed_count": {"type": "integer"},
+                "stats": {"type": "object"},
             }
         },
     },
@@ -364,6 +368,89 @@ MAPPINGS: Dict[str, Dict[str, Any]] = {
             }
         },
     },
+
+    "repo_blame": {
+        **COMMON_SETTINGS,
+        "mappings": {
+            "dynamic": True,
+            "properties": {
+                "repo_name": {"type": "keyword"},
+                "ref": {"type": "keyword"},
+                "generated_at": {"type": "date"},
+                "error": {"type": "text", "analyzer": "text_en"},
+                "files": {
+                    "type": "nested",
+                    "properties": {
+                        "path": {"type": "keyword"},
+                        "ref": {"type": "keyword"},
+                        "root_commit_oid": {"type": "keyword"},
+                        "ranges_count": {"type": "integer"},
+                        "total_lines": {"type": "integer"},
+                        "authors": {
+                            "type": "nested",
+                            "properties": {
+                                "author": {"type": "keyword"},
+                                "total_lines": {"type": "integer"},
+                                "ranges": {
+                                    "type": "nested",
+                                    "properties": {
+                                        "start": {"type": "integer"},
+                                        "end": {"type": "integer"},
+                                        "count": {"type": "integer"},
+                                        "age": {"type": "integer"},
+                                        "commit_sha": {"type": "keyword"},
+                                        "committed_date": {"type": "date"},
+                                        "message": {"type": "text", "analyzer": "text_en"},
+                                        "matching_commit": {
+                                            "type": "object",
+                                            "properties": {
+                                                "repo_name": {"type": "keyword"},
+                                                "sha": {"type": "keyword"},
+                                                "html_url": {"type": "keyword"},
+                                                "author_login": {"type": "keyword"},
+                                                "commit_author": {"type": "object"},
+                                                "files_changed": {"type": "keyword"},
+                                                "files_changed_count": {"type": "integer"},
+                                            }
+                                        },
+                                    }
+                                },
+                            },
+                        },
+                        "examples": {
+                            "type": "nested",
+                            "properties": {
+                                "lines": {
+                                    "type": "object",
+                                    "properties": {
+                                        "start": {"type": "integer"},
+                                        "end": {"type": "integer"},
+                                        "count": {"type": "integer"},
+                                    },
+                                },
+                                "commit_sha": {"type": "keyword"},
+                                "committed_date": {"type": "date"},
+                                "who": {"type": "keyword"},
+                                "message": {"type": "text", "analyzer": "text_en"},
+                                "matching_commit": {
+                                    "type": "object",
+                                    "properties": {
+                                        "repo_name": {"type": "keyword"},
+                                        "sha": {"type": "keyword"},
+                                        "html_url": {"type": "keyword"},
+                                        "author_login": {"type": "keyword"},
+                                        "commit_author": {"type": "object"},
+                                        "files_changed": {"type": "keyword"},
+                                        "files_changed_count": {"type": "integer"},
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            }
+        },
+    },
 }
 
 
@@ -400,6 +487,11 @@ def id_cross_repo_links(doc: Dict[str, Any]) -> Optional[str]:
     base = f"{s.get('repo_name')}:{s.get('type')}:{s.get('number')}->{t.get('repo_name')}:{t.get('type')}:{t.get('number')}"
     return hashlib.sha1(base.encode("utf-8")).hexdigest()
 
+def id_repo_blame(doc: Dict[str, Any]) -> Optional[str]:
+    rn = doc.get("repo_name")
+    ref = doc.get("ref")
+    return f"{rn}#blame#{ref}" if rn and ref else stable_hash_id(doc, "blame:")
+
 
 FILE_TO_INDEX: Dict[str, Tuple[str, Any]] = {
     "repo_meta.json": ("repo_meta", lambda d: d.get("repo_name") or stable_hash_id(d, "meta:")),
@@ -409,6 +501,7 @@ FILE_TO_INDEX: Dict[str, Tuple[str, Any]] = {
     "prs_with_linked_issues.json": ("prs_with_linked_issues", id_prs_with_linked_issues),
     "issues_closed_by_commits.json": ("issues_closed_by_commits", id_issues_closed_by_commits),
     "cross_repo_links.json": ("cross_repo_links", id_cross_repo_links),
+    "repo_blame.json": ("repo_blame", id_repo_blame),
 }
 
 

@@ -211,6 +211,18 @@ def test_get_commit_detail_fail(mock_req):
     assert out == {}
 
 
+@patch("rest_pipeline.get_commit_detail")
+def test_enrich_commits_with_files(mock_detail):
+    mock_detail.return_value = {"files": [{"filename": "a.py"}, {"filename": "b.py"}], "stats": {"total": 2}}
+    commits = [{"sha": "abc123", "commit": {"message": "m"}}, {"sha": None}]
+    enriched = pipeline.enrich_commits_with_files("o", "r", commits)
+    assert enriched[0]["files_changed"] == ["a.py", "b.py"]
+    assert enriched[0]["files_changed_count"] == 2
+    assert enriched[0]["stats"] == {"total": 2}
+    assert enriched[1]["files_changed"] == []
+    assert enriched[1]["files_changed_count"] == 0
+
+
 def test_get_commit_message_cases():
     assert pipeline.get_commit_message({"commit": {"message": "hi"}}) == "hi"
     assert pipeline.get_commit_message({"commit": {}}) == ""
@@ -232,6 +244,39 @@ def test_extract_issue_refs_without_kw():
     refs = pipeline.extract_issue_refs_detailed("related to #3 only")
     assert refs and not refs[0]["has_closing_kw"]
 
+
+def test_summarize_blame_ranges(monkeypatch):
+    commit_lookup = {
+        "abc123": {"sha": "abc123", "repo_name": "o/r", "files_changed": ["f1"], "files_changed_count": 1}
+    }
+    ranges = [{
+        "startingLine": 1,
+        "endingLine": 2,
+        "age": 7,
+        "commit": {
+            "oid": "abc123",
+            "committedDate": "2023-01-01T00:00:00Z",
+            "message": "msg title\nmore",
+            "author": {"name": "Alice"},
+        },
+    }]
+    summary = pipeline.summarize_blame_ranges(ranges, commit_lookup, "o", "r")
+    assert summary["total_lines"] == 2
+    assert summary["authors"][0]["ranges"][0]["matching_commit"]["files_changed"] == ["f1"]
+
+
+@patch("rest_pipeline._request")
+def test_list_repo_files_success(mock_req):
+    mock_req.return_value = make_resp(200, {
+        "tree": [
+            {"path": "a.txt", "type": "blob"},
+            {"path": "dir", "type": "tree"},
+            {"path": "b.py", "type": "blob"},
+        ],
+        "truncated": False,
+    })
+    files = pipeline.list_repo_files("o", "r", "main")
+    assert files == ["a.txt", "b.py"]
 
 # find_prs_with_linked_issues
 @patch("rest_pipeline.get_commit_detail", return_value={"commit": {"message": "resolves o/r#4"}})
@@ -270,6 +315,26 @@ def test_find_cross_project_links(mock_d):
     assert res and "source" in res[0]
 
 
+@patch("rest_pipeline.list_repo_files", return_value=["README.md"])
+@patch("rest_pipeline.fetch_file_blame")
+@patch("rest_pipeline.summarize_blame_ranges")
+def test_collect_repo_blame_success(mock_summary, mock_fetch, mock_list, monkeypatch):
+    mock_fetch.return_value = {"ranges": [{"startingLine": 1, "endingLine": 1}], "root_commit_oid": "root"}
+    mock_summary.return_value = {"ranges_count": 1, "total_lines": 1, "authors": [], "examples": []}
+    monkeypatch.setattr(pipeline, "GITHUB_TOKENS", ["tok"])
+    out = pipeline.collect_repo_blame("o", "r", {"default_branch": "main"}, [{"sha": "abc"}])
+    assert out["files"] and out["files"][0]["path"] == "README.md"
+    mock_fetch.assert_called_once()
+    mock_summary.assert_called_once()
+
+
+def test_collect_repo_blame_needs_token(monkeypatch):
+    monkeypatch.setattr(pipeline, "GITHUB_TOKENS", ["", ""])
+    result = pipeline.collect_repo_blame("o", "r", {"default_branch": "main"}, [])
+    assert result["files"] == []
+    assert "error" in result
+
+
 # ensure_dir + save_json
 def test_ensure_dir_and_save_json(tmp_path):
     d = tmp_path / "sub"
@@ -280,18 +345,23 @@ def test_ensure_dir_and_save_json(tmp_path):
 
 
 # process_repo + main orchestration
-@patch("rest_pipeline.get_repo_meta", return_value={"repo_name": "r"})
-@patch("rest_pipeline.get_issues", return_value=[{"id": 1}])
-@patch("rest_pipeline.get_pull_requests", return_value=[{"id": 2}])
-@patch("rest_pipeline.get_commits", return_value=[{"id": 3}])
-@patch("rest_pipeline.find_prs_with_linked_issues", return_value=[{"id": 4}])
-@patch("rest_pipeline.find_issues_closed_by_repo_commits", return_value=[{"id": 5}])
 @patch("rest_pipeline.find_cross_project_links_issues_and_prs", return_value=[{"id": 6}])
-def test_process_repo_calls_all(m1, m2, m3, m4, m5, m6, tmp_path, monkeypatch):
+@patch("rest_pipeline.find_issues_closed_by_repo_commits", return_value=[{"id": 5}])
+@patch("rest_pipeline.find_prs_with_linked_issues", return_value=[{"id": 4}])
+@patch("rest_pipeline.collect_repo_blame", return_value={"files": []})
+@patch("rest_pipeline.enrich_commits_with_files", side_effect=lambda *_: [{"id": 3}])
+@patch("rest_pipeline.get_commits", return_value=[{"id": 3}])
+@patch("rest_pipeline.get_pull_requests", return_value=[{"id": 2}])
+@patch("rest_pipeline.get_issues", return_value=[{"id": 1}])
+@patch("rest_pipeline.get_repo_meta", return_value={"repo_name": "r", "default_branch": "main"})
+def test_process_repo_calls_all(mock_meta, mock_issues, mock_prs, mock_commits,
+                                mock_enrich, mock_blame, mock_pr_links, mock_closed,
+                                mock_cross, tmp_path, monkeypatch):
     monkeypatch.setattr(pipeline, "OUTPUT_DIR", str(tmp_path))
     pipeline.process_repo("o/r")
-    for m in (m1, m2, m3, m4, m5, m6):
-        m.assert_called()
+    for mock_fn in (mock_meta, mock_issues, mock_prs, mock_commits,
+                    mock_enrich, mock_blame, mock_pr_links, mock_closed, mock_cross):
+        mock_fn.assert_called()
 
 
 def test_main_no_repos(monkeypatch):

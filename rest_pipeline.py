@@ -42,7 +42,9 @@ import re
 import json
 import sys
 import time
+import datetime as dt
 import requests
+from collections import Counter, defaultdict
 from typing import Dict, Any, List, Tuple, Optional
 
 
@@ -60,6 +62,9 @@ MAX_PAGES_COMMITS  = int(os.getenv("MAX_PAGES_COMMITS", "0"))  # 0 = no cap
 MAX_WAIT_ON_403    = int(os.getenv("MAX_WAIT_ON_403", "180"))
 ISSUE_DETAIL_CACHE = {}
 COMMIT_CACHE       = {}
+GRAPHQL_URL        = "https://api.github.com/graphql"
+BLAME_EXAMPLE_LIMIT = int(os.getenv("BLAME_EXAMPLE_LIMIT", "5"))
+BLAME_FILE_LIMIT = int(os.getenv("BLAME_FILE_LIMIT", "0"))  # 0 = no limit
 REPOS              = [
     # "micromatch/micromatch",
     # "laravel-mix/laravel-mix",
@@ -104,14 +109,17 @@ def _log_http_error(resp: requests.Response, url: str) -> None:
     print(f"[error] HTTP {resp.status_code} for {url}\n  -> {msg}")
 
 
-def _set_auth_header_for_current_token() -> None:
-    """Set or clear SESSION Authorization header for the current token index."""
-    token = None
+def _get_current_token() -> Optional[str]:
     try:
         token = GITHUB_TOKENS[GITHUB_TOKEN_INDEX]
     except Exception:
-        pass
+        token = None
+    return token or None
 
+
+def _set_auth_header_for_current_token() -> None:
+    """Set or clear SESSION Authorization header for the current token index."""
+    token = _get_current_token()
     if token:
         SESSION.headers["Authorization"] = f"token {token}"
     else:
@@ -136,6 +144,401 @@ def ensure_dir(p: str) -> None:
 def save_json(path: str, data: Any) -> None:
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
+
+
+# --- graphql helpers / git blame ---
+BLAME_QUERY_BY_REF = """
+query BlameByRef($owner:String!, $name:String!, $qualified:String!, $path:String!) {
+  repository(owner:$owner, name:$name) {
+    ref(qualifiedName:$qualified) {
+      name
+      target {
+        __typename
+        ... on Commit {
+          oid
+          blame(path:$path) {
+            ranges {
+              startingLine
+              endingLine
+              age
+              commit {
+                oid
+                committedDate
+                message
+                author {
+                  name
+                  email
+                  user { login }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+BLAME_QUERY_BY_OBJECT = """
+query BlameByObject($owner:String!, $name:String!, $ref:String!, $path:String!) {
+  repository(owner:$owner, name:$name) {
+    object(expression:$ref) {
+      __typename
+      ... on Commit {
+        oid
+        blame(path:$path) {
+          ranges {
+            startingLine
+            endingLine
+            age
+            commit {
+              oid
+              committedDate
+              message
+              author {
+                name
+                email
+                user { login }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+
+def _graphql_headers() -> Dict[str, str]:
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": USER_AGENT,
+        "Content-Type": "application/json",
+    }
+    token = _get_current_token()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def run_graphql_query(query: str, variables: Dict[str, Any]) -> Dict[str, Any]:
+    payload = {"query": query, "variables": variables}
+    last_exc = None
+
+    for attempt in range(1, MAX_RETRIES + 1):
+        headers = _graphql_headers()
+        try:
+            resp = requests.post(GRAPHQL_URL, json=payload, headers=headers, timeout=REQUEST_TIMEOUT)
+        except requests.RequestException as exc:
+            last_exc = exc
+            delay = BACKOFF_BASE_SEC * (2 ** (attempt - 1))
+            print(f"[graphql retry {attempt}/{MAX_RETRIES}] {exc} -> sleep {delay:.1f}s")
+            sleep_with_jitter(delay)
+            continue
+
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("errors"):
+                messages = ", ".join(
+                    [str(err.get("message")) for err in data["errors"] if isinstance(err, dict)]
+                )
+                raise RuntimeError(f"GraphQL error: {messages or data['errors']}")
+            return data.get("data") or {}
+
+        if resp.status_code == 401:
+            if _switch_to_next_token():
+                continue
+            _log_http_error(resp, GRAPHQL_URL)
+            break
+
+        if resp.status_code in (403, 429):
+            headers_resp = resp.headers or {}
+            remaining = headers_resp.get("X-RateLimit-Remaining")
+            reset = headers_resp.get("X-RateLimit-Reset")
+            retry_after = headers_resp.get("Retry-After")
+            is_rate_limited = (remaining == "0") or (reset and str(reset).isdigit())
+            if is_rate_limited and _switch_to_next_token():
+                continue
+
+            if retry_after and str(retry_after).isdigit():
+                wait_sec = int(retry_after)
+            elif reset and str(reset).isdigit():
+                wait_sec = max(0, int(reset) - int(time.time())) + 1
+            else:
+                wait_sec = BACKOFF_BASE_SEC * (2 ** (attempt - 1))
+            wait_sec = min(wait_sec, MAX_WAIT_ON_403)
+            print(f"[graphql backoff {resp.status_code}] waiting {wait_sec}s for {GRAPHQL_URL}")
+            sleep_with_jitter(wait_sec)
+            continue
+
+        if resp.status_code in {400, 404, 410, 422}:
+            _log_http_error(resp, GRAPHQL_URL)
+            break
+
+        if attempt < MAX_RETRIES:
+            delay = BACKOFF_BASE_SEC * (2 ** (attempt - 1))
+            print(f"[graphql retry {attempt}/{MAX_RETRIES}] HTTP {resp.status_code} -> sleep {delay:.1f}s")
+            sleep_with_jitter(delay)
+            continue
+
+        _log_http_error(resp, GRAPHQL_URL)
+        break
+
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("GraphQL request failed after retries.")
+
+
+def author_key_from_commit_author(author_obj: Optional[dict]) -> str:
+    author_obj = author_obj or {}
+    login = ((author_obj.get("user") or {}).get("login")) or ""
+    name = author_obj.get("name") or ""
+    email = author_obj.get("email") or ""
+    return login or name or email or "unknown"
+
+
+def one_line(msg: Optional[str]) -> str:
+    if not msg:
+        return ""
+    return msg.splitlines()[0].strip()
+
+
+def _lookup_commit_for_blame(commit_lookup: Dict[str, dict],
+                             owner: str,
+                             repo: str,
+                             sha: Optional[str]) -> Optional[dict]:
+    if not sha:
+        return None
+    if sha in commit_lookup and commit_lookup[sha]:
+        return commit_lookup[sha]
+
+    detail = get_commit_detail(owner, repo, sha)
+    if not detail:
+        return None
+    detail = detail.copy()
+    files = detail.get("files") or []
+    detail["files_changed"] = [f.get("filename") for f in files if f.get("filename")]
+    detail["files_changed_count"] = len(detail["files_changed"])
+    detail.setdefault("repo_name", f"{owner}/{repo}")
+    detail.setdefault("sha", sha)
+    commit_lookup[sha] = detail
+    return detail
+
+
+def summarize_blame_ranges(blame_ranges: List[Dict[str, Any]],
+                           commit_lookup: Dict[str, dict],
+                           owner: str,
+                           repo: str) -> Dict[str, Any]:
+    total_lines = 0
+    lines_by_author: Counter = Counter()
+    ranges_by_author: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    examples: List[Dict[str, Any]] = []
+
+    for rg in blame_ranges:
+        start = int(rg.get("startingLine") or 0)
+        end = int(rg.get("endingLine") or start)
+        count = max(0, end - start + 1)
+        total_lines += count
+
+        commit_obj = rg.get("commit") or {}
+        author = author_key_from_commit_author(commit_obj.get("author"))
+        commit_sha = commit_obj.get("oid")
+        lines_by_author[author] += count
+
+        matching_commit = _lookup_commit_for_blame(commit_lookup, owner, repo, commit_sha)
+        files_changed = (matching_commit or {}).get("files_changed") or []
+        match_summary = None
+        if matching_commit:
+            match_summary = {
+                "repo_name": matching_commit.get("repo_name") or f"{owner}/{repo}",
+                "sha": matching_commit.get("sha") or commit_sha,
+                "html_url": matching_commit.get("html_url"),
+                "author_login": ((matching_commit.get("author") or {}).get("login")),
+                "commit_author": ((matching_commit.get("commit") or {}).get("author")),
+                "files_changed": files_changed,
+                "files_changed_count": matching_commit.get("files_changed_count", len(files_changed)),
+            }
+
+        range_entry = {
+            "start": start,
+            "end": end,
+            "count": count,
+            "age": rg.get("age"),
+            "commit_sha": commit_sha,
+            "committed_date": commit_obj.get("committedDate"),
+            "message": one_line(commit_obj.get("message")),
+            "matching_commit": match_summary,
+        }
+        ranges_by_author[author].append(range_entry)
+
+        if len(examples) < BLAME_EXAMPLE_LIMIT:
+            examples.append({
+                "lines": {"start": start, "end": end, "count": count},
+                "commit_sha": commit_sha,
+                "committed_date": commit_obj.get("committedDate"),
+                "who": author,
+                "message": range_entry["message"],
+                "matching_commit": match_summary,
+            })
+
+    authors_sorted = sorted(lines_by_author.items(), key=lambda kv: kv[1], reverse=True)
+    authors_detail = [
+        {
+            "author": author,
+            "total_lines": total,
+            "ranges": ranges_by_author[author],
+        }
+        for author, total in authors_sorted
+    ]
+
+    return {
+        "total_lines": total_lines,
+        "ranges_count": len(blame_ranges),
+        "authors": authors_detail,
+        "examples": examples,
+    }
+
+
+def list_repo_files(owner: str, repo: str, branch: str) -> List[str]:
+    url = f"{BASE_URL}/repos/{owner}/{repo}/git/trees/{branch}?recursive=1"
+    resp = _request("GET", url)
+    if resp.status_code != 200:
+        _log_http_error(resp, url)
+        return []
+
+    payload = resp.json() or {}
+    tree_entries = payload.get("tree") or []
+    files = [
+        entry.get("path")
+        for entry in tree_entries
+        if entry.get("type") == "blob" and entry.get("path")
+    ]
+    if payload.get("truncated"):
+        print(f"[warn] file tree truncated for {owner}/{repo}@{branch}; returned {len(files)} files")
+    return files
+
+
+def fetch_file_blame(owner: str,
+                     repo: str,
+                     branch: str,
+                     file_path: str) -> Dict[str, Any]:
+    qualified = branch if branch.startswith("refs/") else f"refs/heads/{branch}"
+    blame_ranges: List[Dict[str, Any]] = []
+    root_commit_oid = None
+
+    try:
+        data = run_graphql_query(BLAME_QUERY_BY_REF, {
+            "owner": owner,
+            "name": repo,
+            "qualified": qualified,
+            "path": file_path,
+        })
+        target = (((data.get("repository") or {}).get("ref") or {}).get("target") or {})
+        if target.get("__typename") != "Commit":
+            raise RuntimeError(f"Ref target type {target.get('__typename')} for {file_path}")
+        root_commit_oid = target.get("oid")
+        blame_ranges = (((target.get("blame") or {}).get("ranges")) or [])
+    except Exception as exc:
+        print(f"[warn] GraphQL ref blame fallback for {owner}/{repo}:{file_path} -> {exc}")
+        data = run_graphql_query(BLAME_QUERY_BY_OBJECT, {
+            "owner": owner,
+            "name": repo,
+            "ref": branch,
+            "path": file_path,
+        })
+        obj = ((data.get("repository") or {}).get("object") or {})
+        if obj.get("__typename") != "Commit":
+            raise RuntimeError(f"Object type {obj.get('__typename')} for {file_path}")
+        root_commit_oid = obj.get("oid")
+        blame_ranges = (((obj.get("blame") or {}).get("ranges")) or [])
+
+    return {
+        "ranges": blame_ranges,
+        "root_commit_oid": root_commit_oid,
+    }
+
+
+def collect_repo_blame(owner: str,
+                       repo: str,
+                       repo_meta: Dict[str, Any],
+                       commits: List[Dict[str, Any]]) -> Dict[str, Any]:
+    repo_full = f"{owner}/{repo}"
+    default_branch = (repo_meta or {}).get("default_branch") or "main"
+    if not default_branch:
+        default_branch = "main"
+
+    has_graphql_token = any(t for t in GITHUB_TOKENS if t)
+    generated_at = (
+        dt.datetime.now(dt.timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+    if not has_graphql_token:
+        print("[warn] skipping GraphQL blame retrieval - no GitHub tokens configured.")
+        return {
+            "repo_name": repo_full,
+            "ref": default_branch,
+            "files": [],
+            "generated_at": generated_at,
+            "error": "GitHub token required for GraphQL blame queries",
+        }
+
+    repo_files = list_repo_files(owner, repo, default_branch)
+    if not repo_files:
+        print(f"[warn] unable to enumerate files for {repo_full}@{default_branch}")
+        return {
+            "repo_name": repo_full,
+            "ref": default_branch,
+            "files": [],
+            "generated_at": generated_at,
+            "error": "Failed to list repository files",
+        }
+
+    if BLAME_FILE_LIMIT > 0 and len(repo_files) > BLAME_FILE_LIMIT:
+        repo_files = repo_files[:BLAME_FILE_LIMIT]
+        print(f"[info] limiting blame files for {repo_full} to first {BLAME_FILE_LIMIT} entries")
+
+    commit_lookup = {
+        c.get("sha"): c
+        for c in commits
+        if c.get("sha")
+    }
+    files_doc: List[Dict[str, Any]] = []
+    for idx, file_path in enumerate(repo_files, 1):
+        try:
+            blame_payload = fetch_file_blame(owner, repo, default_branch, file_path)
+        except Exception as exc:
+            print(f"[warn] blame failed for {repo_full}:{file_path} -> {exc}")
+            continue
+
+        ranges = blame_payload.get("ranges") or []
+        if not ranges:
+            print(f"[warn] blame empty for {repo_full}:{file_path}")
+            continue
+
+        summary = summarize_blame_ranges(ranges, commit_lookup, owner, repo)
+        files_doc.append({
+            "path": file_path,
+            "ref": default_branch,
+            "root_commit_oid": blame_payload.get("root_commit_oid"),
+            "ranges_count": summary["ranges_count"],
+            "total_lines": summary["total_lines"],
+            "authors": summary["authors"],
+            "examples": summary["examples"],
+        })
+        if idx % 50 == 0:
+            print(f"    processed blame for {idx} files in {repo_full}...")
+
+    return {
+        "repo_name": repo_full,
+        "ref": default_branch,
+        "files": files_doc,
+        "generated_at": generated_at,
+    }
 
 
 # --- http request ---
@@ -289,6 +692,19 @@ def get_commit_detail(owner, repo, sha):
         data = {}
     COMMIT_CACHE[key] = data
     return data
+
+
+def enrich_commits_with_files(owner: str, repo: str, commits: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    for commit in commits:
+        sha = commit.get("sha")
+        detail = get_commit_detail(owner, repo, sha) if sha else {}
+        files = (detail or {}).get("files") or []
+        filenames = [f.get("filename") for f in files if f.get("filename")]
+        commit["files_changed"] = filenames
+        commit["files_changed_count"] = len(filenames)
+        if detail and detail.get("stats") and "stats" not in commit:
+            commit["stats"] = detail["stats"]
+    return commits
 
 
 def get_pr_commits(owner: str, repo: str, number: int) -> List[Dict[str, Any]]:
@@ -612,7 +1028,12 @@ def process_repo(full_name: str) -> None:
 
     print("  fetching commits...")
     commits = get_commits(owner, repo)
+    commits = enrich_commits_with_files(owner, repo, commits)
     save_json(f"{out_dir}/commits.json", commits)
+
+    print("  fetching git blame snapshots...")
+    repo_blame = collect_repo_blame(owner, repo, repo_meta, commits)
+    save_json(f"{out_dir}/repo_blame.json", repo_blame)
 
     print("  fetching prs with issue references...")
     pr_links = find_prs_with_linked_issues(owner, repo, prs)
