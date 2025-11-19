@@ -152,6 +152,7 @@ This project follows the software engineering standards outlined in the COSC 448
 - All scripts are fully documented with descriptive docstrings and inline comments (where applicable).
 - Functions and modules follow PEP 8 style guidelines for readability.
 - Testing and logging are integrated throughout for reliability and traceability.
+- Additional Docs – The docs/ folder includes weekly progress updates (`docs/weekly_updates.md`) and a detailed explanation of every JSON artifact the pipeline produces (`docs/pipeline_outputs.md`).
 
 By maintaining clear documentation, consistent naming, and structured commits, the project meets the expectations for professional, research-grade code in a collaborative academic setting.
 
