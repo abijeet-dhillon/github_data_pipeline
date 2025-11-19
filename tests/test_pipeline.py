@@ -15,9 +15,9 @@ Test Coverage:
     • Utility helpers (JSON save, directory creation, regex extractors)
     • Orchestration functions (`process_repo`, `main`)
 
-Usage:
-    Run all tests with coverage reporting:
-        pytest -v --cov=rest_pipeline --cov-report=term-missing
+# Usage:
+#     Run all tests with coverage reporting:
+#         pytest tests/test_pipeline.py --maxfail=1 -v --cov=rest_pipeline --cov-report=term-missing
 """
 
 
@@ -82,14 +82,21 @@ def test_log_http_error_json_and_text(capsys):
 
 
 # auth switching
-def test_set_auth_header_and_switch(monkeypatch):
+def test_set_auth_header_and_switch(monkeypatch, capsys):
     pipeline.GITHUB_TOKENS[:] = ["t1", "t2"]
     pipeline.GITHUB_TOKEN_INDEX = 0
     pipeline._set_auth_header_for_current_token()
     assert "Authorization" in pipeline.SESSION.headers
     assert pipeline._switch_to_next_token() is True
     assert pipeline.GITHUB_TOKEN_INDEX == 1
-    pipeline.GITHUB_TOKEN_INDEX = 1
+
+    capsys.readouterr()  # clear output buffer before wrap message
+    assert pipeline._switch_to_next_token() is True
+    assert pipeline.GITHUB_TOKEN_INDEX == 0
+    assert "wrapped" in capsys.readouterr().out
+
+    pipeline.GITHUB_TOKENS[:] = ["solo"]
+    pipeline.GITHUB_TOKEN_INDEX = 0
     assert pipeline._switch_to_next_token() is False
 
 
@@ -185,6 +192,7 @@ def test_get_pull_requests_and_commits_and_comments(mock_pg):
     assert pipeline.get_pull_requests("o", "r")
     assert pipeline.get_commits("o", "r")
     assert pipeline.get_issue_comments("o", "r", 1)
+    assert pipeline.get_contributors("o", "r")
 
 
 @patch("rest_pipeline._request", return_value=make_resp(200, {"ok": 1}))
@@ -351,15 +359,16 @@ def test_ensure_dir_and_save_json(tmp_path):
 @patch("rest_pipeline.collect_repo_blame", return_value={"files": []})
 @patch("rest_pipeline.enrich_commits_with_files", side_effect=lambda *_: [{"id": 3}])
 @patch("rest_pipeline.get_commits", return_value=[{"id": 3}])
+@patch("rest_pipeline.get_contributors", return_value=[{"id": 7}])
 @patch("rest_pipeline.get_pull_requests", return_value=[{"id": 2}])
 @patch("rest_pipeline.get_issues", return_value=[{"id": 1}])
 @patch("rest_pipeline.get_repo_meta", return_value={"repo_name": "r", "default_branch": "main"})
-def test_process_repo_calls_all(mock_meta, mock_issues, mock_prs, mock_commits,
+def test_process_repo_calls_all(mock_meta, mock_issues, mock_prs, mock_contribs, mock_commits,
                                 mock_enrich, mock_blame, mock_pr_links, mock_closed,
                                 mock_cross, tmp_path, monkeypatch):
     monkeypatch.setattr(pipeline, "OUTPUT_DIR", str(tmp_path))
     pipeline.process_repo("o/r")
-    for mock_fn in (mock_meta, mock_issues, mock_prs, mock_commits,
+    for mock_fn in (mock_meta, mock_issues, mock_prs, mock_contribs, mock_commits,
                     mock_enrich, mock_blame, mock_pr_links, mock_closed, mock_cross):
         mock_fn.assert_called()
 

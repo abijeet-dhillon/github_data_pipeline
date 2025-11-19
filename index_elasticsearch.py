@@ -2,20 +2,23 @@
 """
 index_elasticsearch_with_full_mappings.py
 -----------------------------------------
-Ingests the datasets produced by `rest_pipeline.py` into Elasticsearch,
-creating indices with *full, queryable object mappings* (dynamic: true).
+Indexes every JSON artifact produced by `rest_pipeline.py` (REST + GraphQL data)
+into Elasticsearch, creating indices with explicit, queryable mappings (dynamic: true).
 
 Datasets (per repo folder under ./output/{owner_repo}/):
   - repo_meta.json                -> index: repo_meta
   - issues.json                   -> index: issues
   - pull_requests.json            -> index: pull_requests
   - commits.json                  -> index: commits
+  - contributors.json             -> index: contributors
   - prs_with_linked_issues.json   -> index: prs_with_linked_issues
   - issues_closed_by_commits.json -> index: issues_closed_by_commits
   - cross_repo_links.json         -> index: cross_repo_links
   - repo_blame.json               -> index: repo_blame
 
-Hardcoded configuration is retained (HARDLOCK=True by default).
+Each mapping includes `repo_name` for consistent filtering and nested schemas where needed
+(e.g., blame ranges, PR links). Hardcoded configuration is retained (HARDLOCK=True) so the
+default CLI invocation mirrors local development settings.
 
 Usage:
     1. Set your Elasticsearch credentials and URL in the hardcoded section at the top
@@ -52,6 +55,7 @@ HARDCODED_BATCH_SIZE   = 1000
 
 # CLI
 def get_args() -> argparse.Namespace:
+    """Parse CLI arguments (overridden by HARDLOCK when enabled)."""
     p = argparse.ArgumentParser(description="Index rest_pipeline.py outputs into Elasticsearch with full, queryable object mappings.")
     p.add_argument("--data-dir", default=HARDCODED_DATA_DIR)
     p.add_argument("--es-url", default=HARDCODED_ES_URL)
@@ -67,6 +71,7 @@ def get_args() -> argparse.Namespace:
 
 # helpers
 def stable_hash_id(doc: Dict[str, Any], salt: str = "") -> str:
+    """Return a deterministic SHA1 hash for a document (optionally salted)."""
     raw = json.dumps(doc, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha1((salt + raw).encode("utf-8")).hexdigest()
 
@@ -320,6 +325,22 @@ MAPPINGS: Dict[str, Dict[str, Any]] = {
         },
     },
 
+    "contributors": {
+        **COMMON_SETTINGS,
+        "mappings": {
+            "dynamic": True,
+            "properties": {
+                "repo_name": {"type": "keyword"},
+                "login": {"type": "keyword"},
+                "id": {"type": "long"},
+                "html_url": {"type": "keyword"},
+                "type": {"type": "keyword"},
+                "site_admin": {"type": "boolean"},
+                "contributions": {"type": "integer"},
+            }
+        },
+    },
+
     "prs_with_linked_issues": {
         **COMMON_SETTINGS,
         "mappings": {
@@ -456,24 +477,29 @@ MAPPINGS: Dict[str, Dict[str, Any]] = {
 
 # file -> index routing and ids
 def id_commits(doc: Dict[str, Any]) -> Optional[str]:
+    """Use the commit SHA when present, otherwise fall back to a stable hash."""
     return doc.get("sha") or stable_hash_id(doc, "commit:")
 
 def id_pull_requests(doc: Dict[str, Any]) -> Optional[str]:
+    """Build IDs using repo_name#pr#number to keep PR documents unique."""
     rn = doc.get("repo_name")
     num = doc.get("number")
     return f"{rn}#pr#{num}" if rn and num is not None else stable_hash_id(doc, "pr:")
 
 def id_issues(doc: Dict[str, Any]) -> Optional[str]:
+    """Return repo_name#issue#number ids for issues (or hashed fallback)."""
     rn = doc.get("repo_name")
     num = doc.get("number")
     return f'{rn}#issue#{num}' if rn and num is not None else stable_hash_id(doc, "issue:")
 
 def id_prs_with_linked_issues(doc: Dict[str, Any]) -> Optional[str]:
+    """IDs for PR-link docs combine repo name with PR number."""
     rn = doc.get("repo_name")
     num = doc.get("pr_number") or doc.get("number")
     return f"{rn}#prlinks#{num}" if rn and num is not None else stable_hash_id(doc, "prlinks:")
 
 def id_issues_closed_by_commits(doc: Dict[str, Any]) -> Optional[str]:
+    """Combine repo, issue number, and commit SHA for closing references."""
     rn = doc.get("repo_name")
     num = doc.get("issue_number") or doc.get("number")
     sha = doc.get("commit_sha")
@@ -482,12 +508,20 @@ def id_issues_closed_by_commits(doc: Dict[str, Any]) -> Optional[str]:
     return stable_hash_id(doc, "closedby:")
 
 def id_cross_repo_links(doc: Dict[str, Any]) -> Optional[str]:
+    """Hash the source→target tuple to ensure identical cross-links dedupe cleanly."""
     s = doc.get("source", {}) or {}
     t = doc.get("target", {}) or {}
     base = f"{s.get('repo_name')}:{s.get('type')}:{s.get('number')}->{t.get('repo_name')}:{t.get('type')}:{t.get('number')}"
     return hashlib.sha1(base.encode("utf-8")).hexdigest()
 
+def id_contributors(doc: Dict[str, Any]) -> Optional[str]:
+    """Return repo_name#contrib#login IDs for contributors."""
+    rn = doc.get("repo_name")
+    login = doc.get("login")
+    return f"{rn}#contrib#{login}" if rn and login else stable_hash_id(doc, "contrib:")
+
 def id_repo_blame(doc: Dict[str, Any]) -> Optional[str]:
+    """Blame documents are keyed by repo+ref for deterministic updates."""
     rn = doc.get("repo_name")
     ref = doc.get("ref")
     return f"{rn}#blame#{ref}" if rn and ref else stable_hash_id(doc, "blame:")
@@ -498,6 +532,7 @@ FILE_TO_INDEX: Dict[str, Tuple[str, Any]] = {
     "issues.json": ("issues", id_issues),
     "pull_requests.json": ("pull_requests", id_pull_requests),
     "commits.json": ("commits", id_commits),
+    "contributors.json": ("contributors", id_contributors),
     "prs_with_linked_issues.json": ("prs_with_linked_issues", id_prs_with_linked_issues),
     "issues_closed_by_commits.json": ("issues_closed_by_commits", id_issues_closed_by_commits),
     "cross_repo_links.json": ("cross_repo_links", id_cross_repo_links),
@@ -508,10 +543,12 @@ FILE_TO_INDEX: Dict[str, Tuple[str, Any]] = {
 # scanning & indexing
 def scan_and_index(es: ESClient, data_dir: Path, index_prefix: str,
                    dry_run: bool = False, batch_size: int = 1000) -> None:
+    """Iterate over repo folders and stream JSON docs into their target indices."""
     if not data_dir.exists():
         print(f"Data dir not found: {data_dir}")
         return
 
+    # Ensure indices exist (with mappings) before indexing to avoid runtime schema surprises.
     for _, (idx_name, _) in FILE_TO_INDEX.items():
         full = f"{index_prefix}{idx_name}"
         es.ensure_index(full, MAPPINGS.get(idx_name))
@@ -559,6 +596,7 @@ def scan_and_index(es: ESClient, data_dir: Path, index_prefix: str,
 
 # entrypoint
 def main() -> None:
+    """CLI entrypoint for the indexing workflow."""
     args = get_args()
     # apply HARDLOCK
     if HARDLOCK:

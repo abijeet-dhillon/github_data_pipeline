@@ -31,6 +31,7 @@ Outputs (per repository):
         ├── issues.json
         ├── pull_requests.json
         ├── commits.json
+        ├── contributors.json
         ├── prs_with_linked_issues.json
         ├── issues_closed_by_commits.json
         └── cross_repo_links.json
@@ -66,21 +67,22 @@ GRAPHQL_URL        = "https://api.github.com/graphql"
 BLAME_EXAMPLE_LIMIT = int(os.getenv("BLAME_EXAMPLE_LIMIT", "5"))
 BLAME_FILE_LIMIT = int(os.getenv("BLAME_FILE_LIMIT", "0"))  # 0 = no limit
 REPOS              = [
+    "carsondrobe/fellas",
     # "micromatch/micromatch",
     # "laravel-mix/laravel-mix",
     # "standard/standard",
     # "istanbuljs/nyc",
-    # "reduxjs/redux",
     # "axios/axios",
     # "rollup/rollup",
     # "prettier/prettier",
-    "numpy/numpy",
-    "flutter/flutter",
-    "apache/spark",
-    "torvalds/linux",
-    "grafana/grafana",
-    "django/django",
-    "pandas-dev/pandas"
+    # "numpy/numpy",
+    # "flutter/flutter",
+    # "apache/spark",
+    # "reduxjs/redux",
+    # "torvalds/linux",
+    # "grafana/grafana",
+    # "django/django",
+    # "pandas-dev/pandas"
 ]
 
 
@@ -96,11 +98,13 @@ if GITHUB_TOKENS and GITHUB_TOKENS[0]:
 
 # --- helpers ---
 def sleep_with_jitter(base: float) -> None:
+    """Pause execution with +/- 25% jitter to avoid synchronized retries."""
     jitter = base * 0.25 * (0.5 - (os.urandom(1)[0] / 255.0))
     time.sleep(max(0.0, base + jitter))
 
 
 def _log_http_error(resp: requests.Response, url: str) -> None:
+    """Print a short, human-readable message when GitHub returns an error."""
     try:
         body = resp.json()
     except Exception:
@@ -110,6 +114,7 @@ def _log_http_error(resp: requests.Response, url: str) -> None:
 
 
 def _get_current_token() -> Optional[str]:
+    """Return the token for the current index or None when exhausted."""
     try:
         token = GITHUB_TOKENS[GITHUB_TOKEN_INDEX]
     except Exception:
@@ -129,19 +134,27 @@ def _set_auth_header_for_current_token() -> None:
 def _switch_to_next_token() -> bool:
     """Advance to the next token if available; return True if switched."""
     global GITHUB_TOKEN_INDEX
-    if "GITHUB_TOKENS" in globals() and GITHUB_TOKENS and (GITHUB_TOKEN_INDEX + 1) < len(GITHUB_TOKENS):
-        GITHUB_TOKEN_INDEX += 1
-        _set_auth_header_for_current_token()
-        print(f"[rate-limit] switched to token {GITHUB_TOKEN_INDEX+1}/{len(GITHUB_TOKENS)}")
-        return True
-    return False
+    if not GITHUB_TOKENS or len(GITHUB_TOKENS) == 1:
+        return False
+
+    last_index = len(GITHUB_TOKENS) - 1
+    GITHUB_TOKEN_INDEX = (GITHUB_TOKEN_INDEX + 1) % len(GITHUB_TOKENS)
+    _set_auth_header_for_current_token()
+
+    if GITHUB_TOKEN_INDEX == 0 and last_index > 0:
+        print(f"[rate-limit] wrapped to token 1/{len(GITHUB_TOKENS)}")
+    else:
+        print(f"[rate-limit] switched to token {GITHUB_TOKEN_INDEX + 1}/{len(GITHUB_TOKENS)}")
+    return True
 
 
 def ensure_dir(p: str) -> None:
+    """Create output directories as-needed without raising for existing folders."""
     os.makedirs(p, exist_ok=True)
 
 
 def save_json(path: str, data: Any) -> None:
+    """Write JSON to disk using UTF-8 and deterministic formatting."""
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
@@ -212,6 +225,7 @@ query BlameByObject($owner:String!, $name:String!, $ref:String!, $path:String!) 
 
 
 def _graphql_headers() -> Dict[str, str]:
+    """Build headers for GraphQL requests, attaching the active PAT if available."""
     headers = {
         "Accept": "application/vnd.github+json",
         "User-Agent": USER_AGENT,
@@ -224,6 +238,7 @@ def _graphql_headers() -> Dict[str, str]:
 
 
 def run_graphql_query(query: str, variables: Dict[str, Any]) -> Dict[str, Any]:
+    """Execute a GraphQL query with retry/backoff semantics similar to REST."""
     payload = {"query": query, "variables": variables}
     last_exc = None
 
@@ -292,6 +307,7 @@ def run_graphql_query(query: str, variables: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def author_key_from_commit_author(author_obj: Optional[dict]) -> str:
+    """Normalize commit author identity, preferring login > name > email."""
     author_obj = author_obj or {}
     login = ((author_obj.get("user") or {}).get("login")) or ""
     name = author_obj.get("name") or ""
@@ -300,6 +316,7 @@ def author_key_from_commit_author(author_obj: Optional[dict]) -> str:
 
 
 def one_line(msg: Optional[str]) -> str:
+    """Return the first line of a commit or blame message."""
     if not msg:
         return ""
     return msg.splitlines()[0].strip()
@@ -309,6 +326,7 @@ def _lookup_commit_for_blame(commit_lookup: Dict[str, dict],
                              owner: str,
                              repo: str,
                              sha: Optional[str]) -> Optional[dict]:
+    """Pull commit metadata for blame ranges, caching files_changed details."""
     if not sha:
         return None
     if sha in commit_lookup and commit_lookup[sha]:
@@ -331,6 +349,7 @@ def summarize_blame_ranges(blame_ranges: List[Dict[str, Any]],
                            commit_lookup: Dict[str, dict],
                            owner: str,
                            repo: str) -> Dict[str, Any]:
+    """Aggregate blame ranges into author summaries and worked examples."""
     total_lines = 0
     lines_by_author: Counter = Counter()
     ranges_by_author: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
@@ -402,6 +421,7 @@ def summarize_blame_ranges(blame_ranges: List[Dict[str, Any]],
 
 
 def list_repo_files(owner: str, repo: str, branch: str) -> List[str]:
+    """Return all blob paths for a branch using the git tree API (recursive)."""
     url = f"{BASE_URL}/repos/{owner}/{repo}/git/trees/{branch}?recursive=1"
     resp = _request("GET", url)
     if resp.status_code != 200:
@@ -424,6 +444,7 @@ def fetch_file_blame(owner: str,
                      repo: str,
                      branch: str,
                      file_path: str) -> Dict[str, Any]:
+    """Request blame ranges for a file, falling back between ref/object queries."""
     qualified = branch if branch.startswith("refs/") else f"refs/heads/{branch}"
     blame_ranges: List[Dict[str, Any]] = []
     root_commit_oid = None
@@ -464,6 +485,7 @@ def collect_repo_blame(owner: str,
                        repo: str,
                        repo_meta: Dict[str, Any],
                        commits: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Retrieve blame slices for repo files and enrich with commit summaries."""
     repo_full = f"{owner}/{repo}"
     default_branch = (repo_meta or {}).get("default_branch") or "main"
     if not default_branch:
@@ -502,6 +524,7 @@ def collect_repo_blame(owner: str,
         repo_files = repo_files[:BLAME_FILE_LIMIT]
         print(f"[info] limiting blame files for {repo_full} to first {BLAME_FILE_LIMIT} entries")
 
+    # Build a quick lookup so blame enrichment can embed commit metadata without refetching.
     commit_lookup = {
         c.get("sha"): c
         for c in commits
@@ -543,6 +566,7 @@ def collect_repo_blame(owner: str,
 
 # --- http request ---
 def _request(method: str, url: str, **kwargs) -> requests.Response:
+    """Perform a REST call with retry, exponential backoff, and token cycling."""
     if "Authorization" not in getattr(SESSION, "headers", {}):
         _set_auth_header_for_current_token()
 
@@ -570,6 +594,7 @@ def _request(method: str, url: str, **kwargs) -> requests.Response:
             return resp
 
         if resp.status_code in (403, 429):
+            # Treat rate-limit/abuse responses uniformly and decide whether to rotate tokens or wait.
             headers = resp.headers or {}
             remaining = headers.get("X-RateLimit-Remaining")
             reset = headers.get("X-RateLimit-Reset")
@@ -645,6 +670,7 @@ def _paged_get(url: str, owner: str, repo: str, *, max_pages: int = 0) -> List[D
 
 # --- data retrieval urls ---
 def get_repo_meta(owner: str, repo: str) -> Dict[str, Any]:
+    """Fetch repository metadata and normalize repo_name field."""
     url = f"{BASE_URL}/repos/{owner}/{repo}"
     resp = _request("GET", url)
     if resp.status_code == 200:
@@ -659,27 +685,38 @@ def get_repo_meta(owner: str, repo: str) -> Dict[str, Any]:
 
 
 def get_issues(owner: str, repo: str) -> List[Dict[str, Any]]:
+    """Return all issues (excluding pull requests) for a repository."""
     url = f"{BASE_URL}/repos/{owner}/{repo}/issues?state=all"
     data = _paged_get(url, owner, repo)
     return [i for i in data if "pull_request" not in i]
 
 
 def get_pull_requests(owner: str, repo: str) -> List[Dict[str, Any]]:
+    """Return all pull requests for a repository."""
     url = f"{BASE_URL}/repos/{owner}/{repo}/pulls?state=all"
     return _paged_get(url, owner, repo)
 
 
 def get_commits(owner: str, repo: str) -> List[Dict[str, Any]]:
+    """Return commit metadata, optionally capped by MAX_PAGES_COMMITS."""
     url = f"{BASE_URL}/repos/{owner}/{repo}/commits"
     return _paged_get(url, owner, repo, max_pages=MAX_PAGES_COMMITS)
 
 
 def get_issue_comments(owner: str, repo: str, issue_number: int) -> List[Dict[str, Any]]:
+    """Return all comments for a specific issue."""
     url = f"{BASE_URL}/repos/{owner}/{repo}/issues/{issue_number}/comments"
     return _paged_get(url, owner, repo)
 
 
+def get_contributors(owner: str, repo: str) -> List[Dict[str, Any]]:
+    """Return GitHub's contributor stats for a repository (one entry per author)."""
+    url = f"{BASE_URL}/repos/{owner}/{repo}/contributors"
+    return _paged_get(url, owner, repo)
+
+
 def get_commit_detail(owner, repo, sha):
+    """Fetch a commit with diff metadata, caching responses by repo/sha."""
     key = f"{owner}/{repo}@{sha}"
     if key in COMMIT_CACHE:
         return COMMIT_CACHE[key]
@@ -695,6 +732,7 @@ def get_commit_detail(owner, repo, sha):
 
 
 def enrich_commits_with_files(owner: str, repo: str, commits: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Populate each commit with files_changed / files_changed_count / stats."""
     for commit in commits:
         sha = commit.get("sha")
         detail = get_commit_detail(owner, repo, sha) if sha else {}
@@ -708,11 +746,13 @@ def enrich_commits_with_files(owner: str, repo: str, commits: List[Dict[str, Any
 
 
 def get_pr_commits(owner: str, repo: str, number: int) -> List[Dict[str, Any]]:
+    """Retrieve commits associated with a pull request."""
     url = f"{BASE_URL}/repos/{owner}/{repo}/pulls/{number}/commits"
     return _paged_get(url, owner, repo)
 
 
 def get_commit_message(commit_obj: dict) -> str:
+    """Safely extract the commit message text."""
     return ((commit_obj.get("commit") or {}).get("message")) or ""
 
 
@@ -725,6 +765,7 @@ ISSUE_REF_RE = re.compile(
 
 
 def extract_issue_refs_detailed(text: str) -> List[Dict[str, Any]]:
+    """Parse sentences for issue references, returning metadata about matches."""
     out: List[Dict[str, Any]] = []
     if not text:
         return out
@@ -752,6 +793,7 @@ def extract_issue_refs_detailed(text: str) -> List[Dict[str, Any]]:
 def find_prs_with_linked_issues(owner: str, repo: str,
                                 prs: List[Dict[str, Any]],
                                 local_issues: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
+    """Discover PRs referencing issues via titles, bodies, commits, or merge messages."""
     results: List[Dict[str, Any]] = []
     issue_author_cache: Dict[Tuple[str, int], Optional[str]] = {}
     pr_commits_cache: Dict[int, List[Dict[str, Any]]] = {}
@@ -852,6 +894,7 @@ def find_prs_with_linked_issues(owner: str, repo: str,
 
 
 def find_issues_closed_by_repo_commits(owner: str, repo: str, commits: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Return commit→issue linkage rows when commit messages contain closing keywords."""
     results: List[Dict[str, Any]] = []
     issue_author_cache: Dict[Tuple[str, int], Optional[str]] = {}
 
@@ -903,11 +946,13 @@ CROSS_REPO_RE = re.compile(r"([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(\d+)", re.IGNORE
 
 
 def _parse_full_repo(full_repo: str) -> Tuple[str, str]:
+    """Split \"owner/repo\" strings and trim whitespace leftovers."""
     owner, repo = full_repo.split("/", 1)
     return owner.strip(), repo.strip()
 
 
 def get_issue_or_pr_details(owner: str, repo: str, number: int) -> dict:
+    """Fetch issue/PR details with caching to minimize duplicate API calls."""
     key = f"{owner}/{repo}#{number}".lower()
     if key in ISSUE_DETAIL_CACHE:
         return ISSUE_DETAIL_CACHE[key]
@@ -918,10 +963,12 @@ def get_issue_or_pr_details(owner: str, repo: str, number: int) -> dict:
 
 
 def classify_issue_or_pr(details: dict) -> str:
+    """Return the document type (issue vs PR) based on GitHub response shape."""
     return "pull_request" if details and details.get("pull_request") else "issue"
 
 
 def _source_text_buckets_for_issue_like(owner: str, repo: str, issue_like: dict):
+    """Yield reference buckets (title/body) with timestamps for the provided artifact."""
     number = issue_like.get("number")
     created_at = issue_like.get("created_at") or issue_like.get("updated_at")
     title = issue_like.get("title") or ""
@@ -931,6 +978,7 @@ def _source_text_buckets_for_issue_like(owner: str, repo: str, issue_like: dict)
 
 
 def find_cross_project_links_issues_and_prs(owner: str, repo: str, issues: List[Dict[str, Any]], prs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Identify cross-repo mentions by scanning text and caching referenced targets."""
     results: List[Dict[str, Any]] = []
     this_repo_full = f"{owner}/{repo}".lower()
     target_cache: Dict[Tuple[str, int], Optional[dict]] = {}
@@ -1008,6 +1056,7 @@ def find_cross_project_links_issues_and_prs(owner: str, repo: str, issues: List[
 
 # --- main orchestration ---
 def process_repo(full_name: str) -> None:
+    """Run the end-to-end pipeline for `owner/repo` and persist JSON outputs."""
     owner, repo = full_name.split("/", 1)
     out_dir = os.path.join(OUTPUT_DIR, f"{owner}_{repo}")
     ensure_dir(out_dir)
@@ -1025,6 +1074,10 @@ def process_repo(full_name: str) -> None:
     print("  fetching pull requests...")
     prs = get_pull_requests(owner, repo)
     save_json(f"{out_dir}/pull_requests.json", prs)
+
+    print("  fetching contributors...")
+    contributors = get_contributors(owner, repo)
+    save_json(f"{out_dir}/contributors.json", contributors)
 
     print("  fetching commits...")
     commits = get_commits(owner, repo)
@@ -1051,6 +1104,7 @@ def process_repo(full_name: str) -> None:
 
 
 def main(custom_repos: Optional[List[str]] = None) -> None:
+    """Entry point used by both CLI and imports; accepts optional repo overrides."""
     repos = custom_repos or REPOS
     if not repos:
         print("No repositories specified. Provide CLI args or edit REPOS in the file.")
