@@ -1,7 +1,7 @@
 """
-test_rest_pipeline.py
+test_pipeline.py
 ---------------------
-Comprehensive unit tests for `rest_pipeline.py`.
+Comprehensive unit tests for `pipeline.py`.
 
 These tests validate core functionality of the GitHub REST data pipeline,
 including pagination, authentication handling, rate-limit backoff, data retrieval,
@@ -17,7 +17,7 @@ Test Coverage:
 
 # Usage:
 #     Run all tests with coverage reporting:
-#         pytest tests/test_pipeline.py --maxfail=1 -v --cov=rest_pipeline --cov-report=term-missing
+#         pytest tests/test_pipeline.py --maxfail=1 -v --cov=pipeline --cov-report=term-missing
 """
 
 
@@ -27,7 +27,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import json
 import pytest
 import requests
-import rest_pipeline as pipeline
+import pipeline as pipeline
 from unittest.mock import patch, MagicMock
 
 
@@ -101,15 +101,15 @@ def test_set_auth_header_and_switch(monkeypatch, capsys):
 
 
 # _request(): success + retry logic
-@patch("rest_pipeline.SESSION")
+@patch("pipeline.SESSION")
 def test_request_success(mock_session):
     mock_session.request.return_value = make_resp(200, {"ok": 1})
     r = pipeline._request("GET", "https://api.github.com/x")
     assert r.status_code == 200
 
 
-@patch("rest_pipeline.sleep_with_jitter", lambda *_: None)
-@patch("rest_pipeline.SESSION")
+@patch("pipeline.sleep_with_jitter", lambda *_: None)
+@patch("pipeline.SESSION")
 def test_request_retry_on_exception(mock_session):
     mock_session.request.side_effect = [
         requests.RequestException("boom"),
@@ -119,8 +119,8 @@ def test_request_retry_on_exception(mock_session):
     assert out.status_code == 200
 
 
-@patch("rest_pipeline.sleep_with_jitter", lambda *_: None)
-@patch("rest_pipeline.SESSION")
+@patch("pipeline.sleep_with_jitter", lambda *_: None)
+@patch("pipeline.SESSION")
 def test_request_rate_limit_switch_token(mock_session):
     pipeline.GITHUB_TOKENS[:] = ["t1", "t2"]
     pipeline.GITHUB_TOKEN_INDEX = 0
@@ -131,8 +131,8 @@ def test_request_rate_limit_switch_token(mock_session):
     assert out.status_code == 200
 
 
-@patch("rest_pipeline.sleep_with_jitter", lambda *_: None)
-@patch("rest_pipeline.SESSION")
+@patch("pipeline.sleep_with_jitter", lambda *_: None)
+@patch("pipeline.SESSION")
 def test_request_retry_after_wait(mock_session):
     r1 = make_resp(403, {"message": ""}, headers={"Retry-After": "1"})
     r2 = make_resp(200, {"ok": True})
@@ -141,8 +141,8 @@ def test_request_retry_after_wait(mock_session):
     assert out.status_code == 200
 
 
-@patch("rest_pipeline.sleep_with_jitter", lambda *_: None)
-@patch("rest_pipeline.SESSION")
+@patch("pipeline.sleep_with_jitter", lambda *_: None)
+@patch("pipeline.SESSION")
 def test_request_terminal_4xx(mock_session):
     mock_session.request.return_value = make_resp(404, {"message": "x"})
     r = pipeline._request("GET", "u")
@@ -150,7 +150,7 @@ def test_request_terminal_4xx(mock_session):
 
 
 # _paged_get
-@patch("rest_pipeline._request")
+@patch("pipeline._request")
 def test_paged_get_two_pages(mock_request, monkeypatch):
     monkeypatch.setattr(pipeline, "PER_PAGE", 2)
     mock_request.side_effect = [
@@ -161,7 +161,7 @@ def test_paged_get_two_pages(mock_request, monkeypatch):
     assert [r["id"] for r in res] == [1, 2, 3]
 
 
-@patch("rest_pipeline._request")
+@patch("pipeline._request")
 def test_paged_get_non200(mock_request):
     mock_request.return_value = make_resp(403, {"message": "bad"})
     res = pipeline._paged_get("url", "o", "r")
@@ -169,25 +169,25 @@ def test_paged_get_non200(mock_request):
 
 
 # data retrieval
-@patch("rest_pipeline._request", return_value=make_resp(200, {"full_name": "a/b"}))
+@patch("pipeline._request", return_value=make_resp(200, {"full_name": "a/b"}))
 def test_get_repo_meta_ok(mock_req):
     out = pipeline.get_repo_meta("a", "b")
     assert out["repo_name"] == "a/b"
 
 
-@patch("rest_pipeline._request", return_value=make_resp(404, {"x": 1}))
+@patch("pipeline._request", return_value=make_resp(404, {"x": 1}))
 def test_get_repo_meta_fail(mock_req):
     out = pipeline.get_repo_meta("a", "b")
     assert out["repo_name"] == "a/b"
 
 
-@patch("rest_pipeline._paged_get", return_value=[{"id": 1}, {"pull_request": {}}])
+@patch("pipeline._paged_get", return_value=[{"id": 1}, {"pull_request": {}}])
 def test_get_issues_filters(mock_pg):
     out = pipeline.get_issues("o", "r")
     assert all("pull_request" not in i for i in out)
 
 
-@patch("rest_pipeline._paged_get", return_value=[{"id": 1}])
+@patch("pipeline._paged_get", return_value=[{"id": 1}])
 def test_get_pull_requests_and_commits_and_comments(mock_pg):
     assert pipeline.get_pull_requests("o", "r")
     assert pipeline.get_commits("o", "r")
@@ -195,7 +195,7 @@ def test_get_pull_requests_and_commits_and_comments(mock_pg):
     assert pipeline.get_contributors("o", "r")
 
 
-@patch("rest_pipeline._paged_get")
+@patch("pipeline._paged_get")
 def test_get_issues_incremental_uses_cache(mock_pg, tmp_path, monkeypatch):
     repo_dir = tmp_path / "o_r"
     repo_dir.mkdir()
@@ -211,7 +211,7 @@ def test_get_issues_incremental_uses_cache(mock_pg, tmp_path, monkeypatch):
     assert "since=" in called_url
 
 
-@patch("rest_pipeline._paged_get")
+@patch("pipeline._paged_get")
 def test_get_commits_incremental_uses_cache(mock_pg, tmp_path, monkeypatch):
     repo_dir = tmp_path / "o_r"
     repo_dir.mkdir()
@@ -227,13 +227,13 @@ def test_get_commits_incremental_uses_cache(mock_pg, tmp_path, monkeypatch):
     assert "since=" in called_url
 
 
-@patch("rest_pipeline._request", return_value=make_resp(200, {"ok": 1}))
+@patch("pipeline._request", return_value=make_resp(200, {"ok": 1}))
 def test_get_commit_detail_ok(mock_r):
     out = pipeline.get_commit_detail("o", "r", "sha")
     assert out == {"ok": 1}
 
 
-@patch("rest_pipeline._request")
+@patch("pipeline._request")
 def test_get_commit_detail_invalid_sha(mock_req):
     pipeline.COMMIT_CACHE.clear()  
     mock_req.return_value = MagicMock(status_code=422)
@@ -242,7 +242,7 @@ def test_get_commit_detail_invalid_sha(mock_req):
     assert out == {"error": "invalid_sha"}
 
 
-@patch("rest_pipeline._request")
+@patch("pipeline._request")
 def test_get_commit_detail_fail(mock_req):
     pipeline.COMMIT_CACHE.clear()
     mock_req.return_value = MagicMock(status_code=404)
@@ -251,7 +251,7 @@ def test_get_commit_detail_fail(mock_req):
     assert out == {}
 
 
-@patch("rest_pipeline.get_commit_detail")
+@patch("pipeline.get_commit_detail")
 def test_enrich_commits_with_files(mock_detail):
     mock_detail.return_value = {"files": [{"filename": "a.py"}, {"filename": "b.py"}], "stats": {"total": 2}}
     commits = [{"sha": "abc123", "commit": {"message": "m"}}, {"sha": None}]
@@ -305,7 +305,7 @@ def test_summarize_blame_ranges(monkeypatch):
     assert summary["authors"][0]["ranges"][0]["matching_commit"]["files_changed"] == ["f1"]
 
 
-@patch("rest_pipeline._request")
+@patch("pipeline._request")
 def test_list_repo_files_success(mock_req):
     mock_req.return_value = make_resp(200, {
         "tree": [
@@ -319,9 +319,9 @@ def test_list_repo_files_success(mock_req):
     assert files == ["a.txt", "b.py"]
 
 # find_prs_with_linked_issues
-@patch("rest_pipeline.get_commit_detail", return_value={"commit": {"message": "resolves o/r#4"}})
-@patch("rest_pipeline.get_pr_commits", return_value=[{"commit": {"message": "Fixes #3"}}])
-@patch("rest_pipeline.extract_issue_refs_detailed")
+@patch("pipeline.get_commit_detail", return_value={"commit": {"message": "resolves o/r#4"}})
+@patch("pipeline.get_pr_commits", return_value=[{"commit": {"message": "Fixes #3"}}])
+@patch("pipeline.extract_issue_refs_detailed")
 def test_find_prs_with_linked_issues(mock_extract, *_mocks):
     mock_extract.side_effect = lambda text: [{"full_repo": None, "number": 1, "has_closing_kw": True}] if text else []
     pr = {
@@ -334,7 +334,7 @@ def test_find_prs_with_linked_issues(mock_extract, *_mocks):
 
 
 # find_issues_closed_by_repo_commits
-@patch("rest_pipeline.get_issue_or_pr_details", return_value={"user": {"login": "u"}})
+@patch("pipeline.get_issue_or_pr_details", return_value={"user": {"login": "u"}})
 def test_find_issues_closed_by_repo_commits(mock_d):
     commits = [
         {"sha": "a1", "html_url": "u1", "author": {"login": "x"}, "commit": {"message": "fixes #1"}},
@@ -346,7 +346,7 @@ def test_find_issues_closed_by_repo_commits(mock_d):
 
 
 # cross-project linking
-@patch("rest_pipeline.get_issue_or_pr_details")
+@patch("pipeline.get_issue_or_pr_details")
 def test_find_cross_project_links(mock_d):
     mock_d.return_value = {"html_url": "h", "created_at": "t", "user": {"login": "x"}}
     issues = [{"number": 1, "title": "refs ext/repo#9", "body": "", "created_at": "t1", "html_url": "u"}]
@@ -355,9 +355,9 @@ def test_find_cross_project_links(mock_d):
     assert res and "source" in res[0]
 
 
-@patch("rest_pipeline.list_repo_files", return_value=["README.md"])
-@patch("rest_pipeline.fetch_file_blame")
-@patch("rest_pipeline.summarize_blame_ranges")
+@patch("pipeline.list_repo_files", return_value=["README.md"])
+@patch("pipeline.fetch_file_blame")
+@patch("pipeline.summarize_blame_ranges")
 def test_collect_repo_blame_success(mock_summary, mock_fetch, mock_list, monkeypatch):
     mock_fetch.return_value = {"ranges": [{"startingLine": 1, "endingLine": 1}], "root_commit_oid": "root"}
     mock_summary.return_value = {"ranges_count": 1, "total_lines": 1, "authors": [], "examples": []}
@@ -419,16 +419,16 @@ def test_ensure_dir_and_save_json(tmp_path):
 
 
 # process_repo + main orchestration
-@patch("rest_pipeline.find_cross_project_links_issues_and_prs", return_value=[{"id": 6}])
-@patch("rest_pipeline.find_issues_closed_by_repo_commits", return_value=[{"id": 5}])
-@patch("rest_pipeline.find_prs_with_linked_issues", return_value=[{"id": 4}])
-@patch("rest_pipeline.collect_repo_blame", return_value={"files": []})
-@patch("rest_pipeline.enrich_commits_with_files", side_effect=lambda *_: [{"id": 3}])
-@patch("rest_pipeline.get_commits", return_value=[{"id": 3}])
-@patch("rest_pipeline.get_contributors", return_value=[{"id": 7}])
-@patch("rest_pipeline.get_pull_requests", return_value=[{"id": 2}])
-@patch("rest_pipeline.get_issues", return_value=[{"id": 1}])
-@patch("rest_pipeline.get_repo_meta", return_value={"repo_name": "r", "default_branch": "main"})
+@patch("pipeline.find_cross_project_links_issues_and_prs", return_value=[{"id": 6}])
+@patch("pipeline.find_issues_closed_by_repo_commits", return_value=[{"id": 5}])
+@patch("pipeline.find_prs_with_linked_issues", return_value=[{"id": 4}])
+@patch("pipeline.collect_repo_blame", return_value={"files": []})
+@patch("pipeline.enrich_commits_with_files", side_effect=lambda *_: [{"id": 3}])
+@patch("pipeline.get_commits", return_value=[{"id": 3}])
+@patch("pipeline.get_contributors", return_value=[{"id": 7}])
+@patch("pipeline.get_pull_requests", return_value=[{"id": 2}])
+@patch("pipeline.get_issues", return_value=[{"id": 1}])
+@patch("pipeline.get_repo_meta", return_value={"repo_name": "r", "default_branch": "main"})
 def test_process_repo_calls_all(mock_meta, mock_issues, mock_prs, mock_contribs, mock_commits,
                                 mock_enrich, mock_blame, mock_pr_links, mock_closed,
                                 mock_cross, tmp_path, monkeypatch):
@@ -445,7 +445,7 @@ def test_main_no_repos(monkeypatch):
         pipeline.main([])
 
 
-@patch("rest_pipeline.process_repo")
+@patch("pipeline.process_repo")
 def test_main_custom_repos(mock_proc):
     pipeline.main(["a/b", "c/d"])
     mock_proc.assert_any_call("a/b")

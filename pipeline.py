@@ -1,5 +1,5 @@
 """
-rest_pipeline.py
+pipeline.py
 ----------------
 A unified GitHub data pipeline that automates the retrieval, parsing, and linking of
 repository data using the GitHub REST API (v3).
@@ -21,9 +21,9 @@ Usage:
     - Configure GitHub API tokens at the top of this file.
     - Add or modify repositories in the `REPOS` list.
     - Run:
-          python3 rest_pipeline.py
+          python3 pipeline.py
     - Optionally provide repository names as CLI arguments:
-          python3 rest_pipeline.py owner/repo another/repo
+          python3 pipeline.py owner/repo another/repo
 
 Outputs (per repository):
     output/{owner_repo}/
@@ -72,22 +72,21 @@ GRAPHQL_URL        = "https://api.github.com/graphql"
 BLAME_EXAMPLE_LIMIT = int(os.getenv("BLAME_EXAMPLE_LIMIT", "5"))
 BLAME_FILE_LIMIT = int(os.getenv("BLAME_FILE_LIMIT", "0"))  # 0 = no limit
 REPOS              = [
-    # "carsondrobe/fellas",
-    "micromatch/micromatch"
+    # "micromatch/micromatch",
     # "laravel-mix/laravel-mix",
     # "standard/standard",
     # "istanbuljs/nyc",
     # "axios/axios",
     # "rollup/rollup",
-    # "numpy/numpy",
-    # "flutter/flutter",
-    # "apache/spark",
-    # "reduxjs/redux",
-    # "torvalds/linux",
-    # "grafana/grafana",
-    # "django/django",
-    # "prettier/prettier",
-    # "pandas-dev/pandas"
+    "numpy/numpy",
+    "flutter/flutter",
+    "apache/spark",
+    "reduxjs/redux",
+    "torvalds/linux",
+    "grafana/grafana",
+    "django/django",
+    "prettier/prettier",
+    "pandas-dev/pandas"
 ]
 
 
