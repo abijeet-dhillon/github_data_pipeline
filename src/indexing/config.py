@@ -7,15 +7,20 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
+from src.secrets import load_local_secrets
+
+_SECRETS = load_local_secrets()
+_ES_SECRETS = _SECRETS.get("elasticsearch", {})
+
 HARDLOCK = True
 HARDCODED_DATA_DIR = "./output"
-HARDCODED_ES_URL = "http://localhost:9200"
-HARDCODED_ES_USERNAME: Optional[str] = None
-HARDCODED_ES_PASSWORD: Optional[str] = None
-HARDCODED_ES_API_KEY = "TUFtRW1wb0IwcHZ3UEF3UmZXbng6NGE5MGdGUXEzTW5EcVgwc2xfbnVodw=="
-HARDCODED_VERIFY_TLS = False
-HARDCODED_INDEX_PREFIX = ""
-HARDCODED_BATCH_SIZE = 500
+HARDCODED_ES_URL = _ES_SECRETS.get("url", "http://localhost:9200")
+HARDCODED_ES_USERNAME: Optional[str] = _ES_SECRETS.get("username")
+HARDCODED_ES_PASSWORD: Optional[str] = _ES_SECRETS.get("password")
+HARDCODED_ES_API_KEY = _ES_SECRETS.get("api_key", "")
+HARDCODED_VERIFY_TLS = bool(_ES_SECRETS.get("verify_tls", False))
+HARDCODED_INDEX_PREFIX = _ES_SECRETS.get("index_prefix", "")
+HARDCODED_BATCH_SIZE = int(_ES_SECRETS.get("batch_size", 500))
 
 
 @dataclass(frozen=True)

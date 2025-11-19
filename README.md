@@ -47,12 +47,33 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-# Run the GitHub data pipeline (edit src/pipeline/config.py for repo list/tokens)
+# Run the GitHub data pipeline (edit src/pipeline/config.py for repo list)
 python3 run_pipeline.py
 
 # Index JSON artifacts into Elasticsearch (configure src/indexing/config.py)
 python3 run_indexing.py
 ```
+
+## Secrets Configuration
+
+The pipeline and indexing layers load credentials from `local_secrets.json`, which is gitignored. Create it by copying `local_secrets.example.json` and inserting your values:
+
+```json
+{
+  "github_tokens": ["ghp_token1", "ghp_token2"],
+  "elasticsearch": {
+    "url": "http://localhost:9200",
+    "username": "elastic",
+    "password": "changeme",
+    "api_key": "",
+    "verify_tls": false,
+    "index_prefix": "",
+    "batch_size": 500
+  }
+}
+```
+
+Set `LOCAL_SECRETS_FILE` if you keep the file elsewhere. The tokens and credentials are injected automatically into `src/pipeline/config.py` and `src/indexing/config.py`, so no source edits are required for sensitive data.
 
 Run the full automated test suite:
 

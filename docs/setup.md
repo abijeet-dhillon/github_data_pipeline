@@ -17,15 +17,20 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## 3. Configure the Pipeline (Data Retrieval)
+## 3. Create `local_secrets.json`
 
-Edit `src/pipeline/config.py`:
+1. Copy `local_secrets.example.json` to `local_secrets.json`.
+2. Populate:
+   - `github_tokens`: Personal Access Tokens used by the pipeline.
+   - `elasticsearch`: Shared connection info (URL, username/password or API key, TLS preference, optional index prefix/batch size).
+3. Keep this file out of version control (already gitignored). Set `LOCAL_SECRETS_FILE` if you store it elsewhere.
 
-- Populate `GITHUB_TOKENS` with one or more tokens; the runner automatically rotates and handles rate limits.
-- Adjust `REPOS` to list the repositories you want to collect (format `owner/repo`).
-- Optional environment overrides exist for commit pagination and lookback windows.
+## 4. Configure the Pipeline (Data Retrieval)
 
-## 4. Run the Pipeline
+1. Edit `src/pipeline/config.py` when you need to change `REPOS` or tweak environment-based overrides (pagination, blame sampling, etc.).
+2. Optional environment overrides exist for commit pagination and lookback windows.
+
+## 5. Run the Pipeline
 
 ```bash
 python3 run_pipeline.py
@@ -33,16 +38,13 @@ python3 run_pipeline.py
 
 The script prints progress for each repo and writes JSON artifacts to `output/{owner_repo}`. See [docs/pipeline_outputs.md](pipeline_outputs.md) for details on every file.
 
-## 5. Configure Indexing
+## 6. Configure Indexing
 
-1. Edit `src/indexing/config.py` (or pass CLI flags when `HARDLOCK = False`):
-   - `HARDCODED_DATA_DIR` – Path to the pipeline output folder (default `./output`).
-   - `HARDCODED_ES_URL` / credentials / API key – Elasticsearch connection info (recommend using API key for convenience).
-   - `HARDCODED_INDEX_PREFIX` – Optional prefix to namespace indices.
-   - `HARDCODED_BATCH_SIZE` – Bulk batch size; lower values help avoid HTTP 413 errors for large `repo_blame` docs.
-2. Ensure Elasticsearch is running (e.g., via `./elastic-start-local` or your preferred deployment).
+1. Verify `local_secrets.json` is filled out (URL, credentials, API key, TLS preference, optional index prefix/batch size). `src/indexing/config.py` ingests these values automatically.
+2. Adjust `src/indexing/config.py` only if you need different defaults for `HARDCODED_DATA_DIR` or to disable `HARDLOCK` and accept CLI overrides.
+3. Ensure Elasticsearch is running (e.g., via `./elastic-start-local` or your preferred deployment).
 
-## 6. Run Indexing
+## 7. Run Indexing
 
 ```bash
 python3 run_indexing.py
@@ -50,7 +52,7 @@ python3 run_indexing.py
 
 The runner ensures indices exist (using mappings from `src/indexing/schema.py`) and streams each JSON file under `output/` into Elasticsearch via `ESClient.bulk_index`.
 
-## 7. Testing
+## 8. Testing
 
 The repository splits tests between pipeline and indexing layers. Use the following commands from the project root (after activating the virtual environment):
 
@@ -87,7 +89,7 @@ pytest tests            # quick regression check
 pytest tests --cov=src.pipeline --cov=src.indexing --cov-report=term-missing
 ```
 
-## 8. Operational Tips
+## 9. Operational Tips
 
 - **GitHub rate limits:** The pipeline prints retries and token rotations; monitor stdout for warning messages.
 - **Elasticsearch payloads:** If you encounter HTTP 413 errors while indexing `repo_blame`, reduce `HARDCODED_BATCH_SIZE` or raise `http.max_content_length` server-side (see [docs/project_analytics.md](project_analytics.md)).

@@ -5,12 +5,11 @@ from __future__ import annotations
 import os
 from typing import List
 
+from src.secrets import load_local_secrets
 
-GITHUB_TOKENS: List[str] = [
-    "",
-    "",
-]
-USER_AGENT = "cosc448-initial-pipeline/1.0 (+abijeet)"
+_SECRETS = load_local_secrets()
+GITHUB_TOKENS: List[str] = list(_SECRETS.get("github_tokens", []))
+USER_AGENT = "cosc448-github-data-retrieval/1.0"
 BASE_URL = "https://api.github.com"
 GRAPHQL_URL = "https://api.github.com/graphql"
 PER_PAGE = 100
