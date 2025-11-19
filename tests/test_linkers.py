@@ -1,12 +1,12 @@
-"""Tests for src.pipeline.linkers covering reference extraction and linking.
+"""Tests for src.retrieval.linkers covering reference extraction and linking.
 
 Run with:
-    pytest tests/test_linkers.py --maxfail=1 -v --cov=src.pipeline.linkers --cov-report=term-missing
+    pytest tests/test_linkers.py --maxfail=1 -v --cov=src.retrieval.linkers --cov-report=term-missing
 """
 
 from unittest.mock import patch
 
-from src.pipeline import linkers
+from src.retrieval import linkers
 
 
 def test_extract_issue_refs_detailed_parses_keywords():
@@ -17,9 +17,9 @@ def test_extract_issue_refs_detailed_parses_keywords():
     assert any(ref["has_closing_kw"] for ref in refs)
 
 
-@patch("src.pipeline.linkers.get_issue_or_pr_details", return_value={"user": {"login": "issue-author"}})
-@patch("src.pipeline.linkers.get_commit_detail", return_value={"commit": {"message": ""}})
-@patch("src.pipeline.linkers.get_pr_commits", return_value=[])
+@patch("src.retrieval.linkers.get_issue_or_pr_details", return_value={"user": {"login": "issue-author"}})
+@patch("src.retrieval.linkers.get_commit_detail", return_value={"commit": {"message": ""}})
+@patch("src.retrieval.linkers.get_pr_commits", return_value=[])
 def test_find_prs_with_linked_issues(mock_pr_commits, mock_commit_detail, mock_issue):
     prs = [{
         "number": 7,
@@ -36,7 +36,7 @@ def test_find_prs_with_linked_issues(mock_pr_commits, mock_commit_detail, mock_i
     assert results[0]["links"][0]["issue_author"] == "issue-author"
 
 
-@patch("src.pipeline.linkers.get_issue_or_pr_details", return_value={"user": {"login": "issue-author"}})
+@patch("src.retrieval.linkers.get_issue_or_pr_details", return_value={"user": {"login": "issue-author"}})
 def test_find_issues_closed_by_repo_commits(mock_issue):
     commits = [{
         "sha": "abc",
@@ -49,7 +49,7 @@ def test_find_issues_closed_by_repo_commits(mock_issue):
     assert results[0]["would_auto_close"] is True
 
 
-@patch("src.pipeline.linkers.get_issue_or_pr_details", return_value={
+@patch("src.retrieval.linkers.get_issue_or_pr_details", return_value={
     "pull_request": {},
     "created_at": "2024-01-01T00:00:00Z",
     "user": {"login": "target"},

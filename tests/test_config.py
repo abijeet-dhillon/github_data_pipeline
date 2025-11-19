@@ -1,13 +1,13 @@
-"""Tests for src.pipeline.config ensuring env overrides and defaults work.
+"""Tests for src.retrieval.config ensuring env overrides and defaults work.
 
 Run with coverage to validate configuration handling:
-    pytest tests/test_config.py --maxfail=1 -v --cov=src.pipeline.config --cov-report=term-missing
+    pytest tests/test_config.py --maxfail=1 -v --cov=src.retrieval.config --cov-report=term-missing
 """
 
 from importlib import reload
 import os
 
-import src.pipeline.config as config
+import src.retrieval.config as config
 
 
 def test_config_defaults_are_present():

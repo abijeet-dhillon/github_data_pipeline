@@ -1,27 +1,27 @@
-"""Tests for src.pipeline.runner ensuring orchestration flows through dependencies.
+"""Tests for src.retrieval.runner ensuring orchestration flows through dependencies.
 
 Run with:
-    pytest tests/test_runner.py --maxfail=1 -v --cov=src.pipeline.runner --cov-report=term-missing
+    pytest tests/test_runner.py --maxfail=1 -v --cov=src.retrieval.runner --cov-report=term-missing
 """
 
 from unittest.mock import patch
 
 import pytest
 
-from src.pipeline import runner
+from src.retrieval import runner
 
 
-@patch("src.pipeline.runner.save_json")
-@patch("src.pipeline.runner.find_cross_project_links_issues_and_prs", return_value=[])
-@patch("src.pipeline.runner.find_issues_closed_by_repo_commits", return_value=[])
-@patch("src.pipeline.runner.find_prs_with_linked_issues", return_value=[])
-@patch("src.pipeline.runner.collect_repo_blame", return_value={"files": []})
-@patch("src.pipeline.runner.get_commits", return_value=[{"sha": "abc"}])
-@patch("src.pipeline.runner.get_contributors", return_value=[{"id": 3}])
-@patch("src.pipeline.runner.get_pull_requests", return_value=[{"id": 2}])
-@patch("src.pipeline.runner.get_issues", return_value=[{"id": 1}])
-@patch("src.pipeline.runner.get_repo_meta", return_value={"default_branch": "main"})
-@patch("src.pipeline.runner.ensure_dir")
+@patch("src.retrieval.runner.save_json")
+@patch("src.retrieval.runner.find_cross_project_links_issues_and_prs", return_value=[])
+@patch("src.retrieval.runner.find_issues_closed_by_repo_commits", return_value=[])
+@patch("src.retrieval.runner.find_prs_with_linked_issues", return_value=[])
+@patch("src.retrieval.runner.collect_repo_blame", return_value={"files": []})
+@patch("src.retrieval.runner.get_commits", return_value=[{"sha": "abc"}])
+@patch("src.retrieval.runner.get_contributors", return_value=[{"id": 3}])
+@patch("src.retrieval.runner.get_pull_requests", return_value=[{"id": 2}])
+@patch("src.retrieval.runner.get_issues", return_value=[{"id": 1}])
+@patch("src.retrieval.runner.get_repo_meta", return_value={"default_branch": "main"})
+@patch("src.retrieval.runner.ensure_dir")
 def test_process_repo_invokes_all_dependencies(mock_dir, mock_meta, mock_issues, mock_prs,
                                               mock_contribs, mock_commits, mock_blame,
                                               mock_pr_links, mock_closed, mock_cross, mock_save):

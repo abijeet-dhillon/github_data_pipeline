@@ -1,6 +1,6 @@
-# Pipeline JSON Outputs
+# Retrieval JSON Outputs
 
-Each time `pipeline.py` runs, it creates a folder at `output/{owner_repo}` containing a fixed set of JSON files. The notes below describe (1) what each file represents, (2) how the data is collected, and (3) what every key means in plain English so that anyone inspecting the JSON can immediately understand the contents.
+Each time `python3 src/retrieval/runner.py` runs (or the legacy `retrieval.py` shim), it creates a folder at `output/{owner_repo}` containing a fixed set of JSON files. The notes below describe (1) what each file represents, (2) how the data is collected, and (3) what every key means in plain English so that anyone inspecting the JSON can immediately understand the contents.
 
 ---
 
@@ -113,7 +113,7 @@ Each time `pipeline.py` runs, it creates a folder at `output/{owner_repo}` conta
 ## prs_with_linked_issues.json
 
 **What it is:** Derived dataset showing which PRs mention issues in their text or commit history, and whether those mentions would automatically close the issue when merged.  
-**How it is produced:** For every PR, the pipeline scans the PR title/body, all commits in the PR, and the merge commit message (if available). It extracts references such as `fixes #123` or `owner/repo#456`.
+**How it is produced:** For every PR, the retrieval workflow scans the PR title/body, all commits in the PR, and the merge commit message (if available). It extracts references such as `fixes #123` or `owner/repo#456`.
 
 - **`repo_name`** – Owner/repo for the PR.
 - **`pr_number`** – Pull request number.
@@ -154,7 +154,7 @@ Each time `pipeline.py` runs, it creates a folder at `output/{owner_repo}` conta
 ## cross_repo_links.json
 
 **What it is:** Catalog of cross-repository references discovered in issue or PR text/timeline events. This reveals when one project references another (e.g., `other-org/other-repo#123`).  
-**How it is produced:** The pipeline scans issue titles, bodies, and PR equivalents for patterns like `owner/repo#number`. It also follows GitHub timeline events for cross-reference notifications.
+**How it is produced:** The retrieval workflow scans issue titles, bodies, and PR equivalents for patterns like `owner/repo#number`. It also follows GitHub timeline events for cross-reference notifications.
 
 - **`source`** – Describes the artifact containing the reference:
   - **`repo_name`** – Owner/repo where the reference was found.
@@ -164,7 +164,7 @@ Each time `pipeline.py` runs, it creates a folder at `output/{owner_repo}` conta
   - **`created_at`** – Timestamp when the source artifact was created (or last updated if creation time unavailable).
 - **`reference`** – Context detailing how the reference was observed:
   - **`found_in`** – Which text bucket contained the mention (“issue_title” or “issue_body”).
-  - **`seen_at`** – Timestamp when the pipeline detected the reference.
+  - **`seen_at`** – Timestamp when the retrieval workflow detected the reference.
   - **`cross_ref_timestamp`** – Duplicate of `seen_at` (simplifies Elasticsearch range queries).
 - **`target`** – Metadata about the referenced issue/PR:
   - **`repo_name`** – Owner/repo of the referenced artifact.
@@ -179,7 +179,7 @@ Each time `pipeline.py` runs, it creates a folder at `output/{owner_repo}` conta
 ## repo_blame.json
 
 **What it is:** Snapshot summarizing git blame attribution for repository files. It shows which authors are responsible for which line ranges.  
-**How it is produced:** Uses the GitHub GraphQL blame API (`BLAME_QUERY_BY_REF` first, falling back to `BLAME_QUERY_BY_OBJECT`). For each tracked file, the pipeline records blame ranges, enriches them with commit data, and extracts representative examples.
+**How it is produced:** Uses the GitHub GraphQL blame API (`BLAME_QUERY_BY_REF` first, falling back to `BLAME_QUERY_BY_OBJECT`). For each tracked file, the retrieval workflow records blame ranges, enriches them with commit data, and extracts representative examples.
 
 - **`repo_name`** – Owner/repo for the snapshot.
 - **`ref`** – Branch name or qualified ref used when collecting blame.
@@ -218,7 +218,7 @@ Each time `pipeline.py` runs, it creates a folder at `output/{owner_repo}` conta
 ## Common Guarantees Across All Files
 
 1. **`repo_name` is always present** – Every document carries `repo_name` so data can be filtered or joined regardless of file.
-2. **Fields mirror GitHub unless enriched** – The pipeline preserves GitHub’s field names and shapes; any additional fields (such as `files_changed` or `matching_commit`) are clearly additive.
+2. **Fields mirror GitHub unless enriched** – The retrieval workflow preserves GitHub’s field names and shapes; any additional fields (such as `files_changed` or `matching_commit`) are clearly additive.
 3. **Delivered in original order** – Arrays keep the ordering supplied by GitHub, enabling reproducible timelines and comparisons.
 4. **Data provenance is obvious** – Each section above states exactly which API endpoint or derived logic produced the records, eliminating ambiguity when analyzing the JSON.
 
@@ -226,9 +226,9 @@ Each time `pipeline.py` runs, it creates a folder at `output/{owner_repo}` conta
 
 ## Operational Notes & Indexing Considerations
 
-- **Incremental refreshes:** `src/pipeline/collectors.py` automatically detects the most recent timestamps or commit SHAs so repeat runs only fetch deltas. Cached files inside `output/{owner_repo}` are merged with new records to preserve historical context.
+- **Incremental refreshes:** `src/retrieval/collectors.py` automatically detects the most recent timestamps or commit SHAs so repeat runs only fetch deltas. Cached files inside `output/{owner_repo}` are merged with new records to preserve historical context.
 - **Blame payload size:** `repo_blame.json` can be large because it bundles every file, range, and enrichment. When indexing, lower the batch size (see `HARDCODED_BATCH_SIZE` in `src/indexing/config.py`) or increase Elasticsearch’s `http.max_content_length` to avoid HTTP 413 errors.
-- **Schema alignment:** The mappings defined in `src/indexing/schema.py` mirror the structures described above. Whenever a new field is added to the pipeline, update `schema.py` and this document together to keep ingestion predictable.
+- **Schema alignment:** The mappings defined in `src/indexing/schema.py` mirror the structures described above. Whenever a new field is added to the retrieval workflow, update `schema.py` and this document together to keep ingestion predictable.
 - **Downstream indexing:** Each JSON file maps one-to-one with an Elasticsearch index (see `FILE_TO_INDEX`). Because every record contains `repo_name`, data consumers can safely join across indices or filter by repository without extra transformations.
 
 Keep this document close when creating Kibana dashboards or analytical notebooks—it doubles as the contract between the extraction phase and any downstream tooling.

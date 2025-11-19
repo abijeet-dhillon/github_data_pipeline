@@ -1,4 +1,4 @@
-"""Minimal Elasticsearch client wrapper used by the indexing pipeline."""
+"""Minimal Elasticsearch client wrapper used by the indexing workflow."""
 
 from __future__ import annotations
 

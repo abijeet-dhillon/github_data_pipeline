@@ -1,4 +1,4 @@
-# COSC 448 – GitHub Data Pipeline & Indexing Suite
+# COSC 448 – GitHub Data Retrieval & Indexing Suite
 
 ## Project Objective
 
@@ -13,8 +13,8 @@ This repository houses the end-to-end software analytics platform developed for 
 
 The codebase is divided into two cooperative phases:
 
-1. **Pipeline (data acquisition)** – The modules in `src/pipeline` execute authenticated REST and GraphQL calls, handle pagination, apply incremental refreshes, and enrich artifacts (e.g., linking PRs to issues, detecting cross-repo mentions, computing git blame summaries). The compatibility wrapper `run_pipeline.py` simply invokes `src.pipeline.runner.main()`.
-2. **Indexing (data publishing)** – The modules in `src/indexing` define Elasticsearch schemas, manage bulk uploads, and enforce consistent index creation. The compatibility wrapper `run_indexing.py` simply invokes `src.indexing.runner.main()`.
+1. **Retrieval (data acquisition)** – The modules in `src/retrieval` execute authenticated REST and GraphQL calls, handle pagination, apply incremental refreshes, and enrich artifacts (e.g., linking PRs to issues, detecting cross-repo mentions, computing git blame summaries). Run via `python3 src/retrieval/runner.py`; `pipeline.py`/`run_pipeline.py` remain as backward-compatible shims.
+2. **Indexing (data publishing)** – The modules in `src/indexing` define Elasticsearch schemas, manage bulk uploads, and enforce consistent index creation. Run via `python3 src/indexing/runner.py`.
 
 Each phase is independently testable, yet they share conventions such as the `repo_name` join key and deterministic hashing helpers.
 
@@ -23,12 +23,11 @@ Each phase is independently testable, yet they share conventions such as the `re
 ```
 ├── docs/                     # Supplementary documentation (setup, outputs, analytics, syllabus, weekly reports)
 ├── output/                   # Generated JSON artifacts per repository (git-ignored)
-├── run_pipeline.py           # Wrapper that calls src.pipeline.runner.main()
-├── run_indexing.py           # Wrapper that calls src.indexing.runner.main()
+├── run_pipeline.py           # Legacy wrapper (delegates to retrieval)
 ├── src/
-│   ├── pipeline/             # Data collection, GitHub helpers, orchestration
+│   ├── retrieval/            # Data collection, GitHub helpers, orchestration
 │   └── indexing/             # Elasticsearch config, schemas, client, orchestration
-├── tests/                    # Unit tests for pipeline and indexing modules
+├── tests/                    # Unit tests for retrieval and indexing modules
 ├── requirements.txt          # Python dependencies
 └── README.md                 # You are here
 ```
@@ -47,11 +46,11 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-# Run the GitHub data pipeline (edit src/pipeline/config.py for repo list)
-python3 run_pipeline.py
+# Run the GitHub data retrieval workflow (edit src/retrieval/config.py for repo list)
+python3 src/retrieval/runner.py
 
 # Index JSON artifacts into Elasticsearch (configure src/indexing/config.py)
-python3 run_indexing.py
+python3 src/indexing/runner.py
 ```
 
 ## Secrets Configuration
@@ -73,7 +72,7 @@ The pipeline and indexing layers load credentials from `local_secrets.json`, whi
 }
 ```
 
-Set `LOCAL_SECRETS_FILE` if you keep the file elsewhere. The tokens and credentials are injected automatically into `src/pipeline/config.py` and `src/indexing/config.py`, so no source edits are required for sensitive data.
+Set `LOCAL_SECRETS_FILE` if you keep the file elsewhere. The tokens and credentials are injected automatically into `src/retrieval/config.py` and `src/indexing/config.py`, so no source edits are required for sensitive data.
 
 Run the full automated test suite:
 

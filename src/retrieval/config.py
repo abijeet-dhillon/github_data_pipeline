@@ -1,4 +1,4 @@
-"""Central configuration constants for the GitHub data pipeline."""
+"""Central configuration constants for the GitHub data retrieval workflow."""
 
 from __future__ import annotations
 
@@ -27,22 +27,21 @@ BLAME_EXAMPLE_LIMIT = int(os.getenv("BLAME_EXAMPLE_LIMIT", "5"))
 BLAME_FILE_LIMIT = int(os.getenv("BLAME_FILE_LIMIT", "0"))
 
 REPOS = [
-    # "carsondrobe/fellas"
-    "micromatch/micromatch"
+    # "micromatch/micromatch",
     # "laravel-mix/laravel-mix",
     # "standard/standard",
     # "istanbuljs/nyc",
     # "axios/axios",
-    # "rollup/rollup",
-    # "flutter/flutter",
-    # "apache/spark",
-    # "reduxjs/redux",
-    # "torvalds/linux",
-    # "grafana/grafana",
-    # "django/django",
-    # "prettier/prettier",
-    # "numpy/numpy",
-    # "pandas-dev/pandas"   
+    "rollup/rollup",
+    "flutter/flutter",
+    "apache/spark",
+    "reduxjs/redux",
+    "torvalds/linux",
+    "grafana/grafana",
+    "django/django",
+    "prettier/prettier",
+    "numpy/numpy",
+    "pandas-dev/pandas"   
 ]
 
 __all__ = [

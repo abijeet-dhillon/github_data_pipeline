@@ -1,4 +1,4 @@
-"""GitHub data pipeline package with modular components."""
+"""GitHub data retrieval package with modular components."""
 
 from .runner import main, process_repo
 

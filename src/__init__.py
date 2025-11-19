@@ -1,1 +1,1 @@
-"""Top-level package marker for the pipeline sources."""
+"""Top-level package marker for the retrieval and indexing sources."""

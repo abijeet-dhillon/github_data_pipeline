@@ -1,4 +1,4 @@
-"""Entry points for running the modular GitHub data pipeline."""
+"""Entry points for running the modular GitHub data retrieval workflow."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from .linkers import (
 
 
 def process_repo(full_name: str) -> None:
-    """Run the end-to-end pipeline for `owner/repo` and persist JSON outputs."""
+    """Run the end-to-end retrieval pass for `owner/repo` and persist JSON outputs."""
     owner, repo = full_name.split("/", 1)
     out_dir = os.path.join(OUTPUT_DIR, f"{owner}_{repo}")
     ensure_dir(out_dir)

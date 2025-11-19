@@ -1,7 +1,7 @@
-"""Unit tests for src.pipeline.http_client covering retries and pagination.
+"""Unit tests for src.retrieval.http_client covering retries and pagination.
 
 Execute with coverage to validate networking helpers:
-    pytest tests/test_http_client.py --maxfail=1 -v --cov=src.pipeline.http_client --cov-report=term-missing
+    pytest tests/test_http_client.py --maxfail=1 -v --cov=src.retrieval.http_client --cov-report=term-missing
 """
 
 from typing import Any, Dict
@@ -10,8 +10,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from src.pipeline import config
-from src.pipeline import http_client
+from src.retrieval import config
+from src.retrieval import http_client
 
 
 def _make_resp(status: int = 200, payload: Dict[str, Any] | None = None, headers: Dict[str, str] | None = None):
@@ -71,15 +71,15 @@ def test_token_rotation(monkeypatch, capsys):
         http_client.GITHUB_TOKENS[:] = original_http_tokens
 
 
-@patch("src.pipeline.http_client.SESSION")
+@patch("src.retrieval.http_client.SESSION")
 def test_request_success(mock_session):
     mock_session.request.return_value = _make_resp(200, {"ok": 1})
     resp = http_client.request_with_backoff("GET", "https://api.github.com/x")
     assert resp.status_code == 200
 
 
-@patch("src.pipeline.http_client.sleep_with_jitter", lambda *_: None)
-@patch("src.pipeline.http_client.SESSION")
+@patch("src.retrieval.http_client.sleep_with_jitter", lambda *_: None)
+@patch("src.retrieval.http_client.SESSION")
 def test_request_retry_on_exception(mock_session):
     mock_session.request.side_effect = [
         requests.RequestException("boom"),
@@ -89,8 +89,8 @@ def test_request_retry_on_exception(mock_session):
     assert resp.status_code == 200
 
 
-@patch("src.pipeline.http_client.sleep_with_jitter", lambda *_: None)
-@patch("src.pipeline.http_client.SESSION")
+@patch("src.retrieval.http_client.sleep_with_jitter", lambda *_: None)
+@patch("src.retrieval.http_client.SESSION")
 def test_request_rate_limit_switch_token(mock_session):
     config.GITHUB_TOKENS[:] = ["t1", "t2"]
     http_client.GITHUB_TOKEN_INDEX = 0
@@ -101,8 +101,8 @@ def test_request_rate_limit_switch_token(mock_session):
     assert resp.status_code == 200
 
 
-@patch("src.pipeline.http_client.sleep_with_jitter", lambda *_: None)
-@patch("src.pipeline.http_client.SESSION")
+@patch("src.retrieval.http_client.sleep_with_jitter", lambda *_: None)
+@patch("src.retrieval.http_client.SESSION")
 def test_request_retry_after_wait(mock_session):
     r1 = _make_resp(403, {"message": ""}, headers={"Retry-After": "1"})
     r2 = _make_resp(200, {"ok": True})
@@ -111,7 +111,7 @@ def test_request_retry_after_wait(mock_session):
     assert resp.status_code == 200
 
 
-@patch("src.pipeline.http_client.request_with_backoff")
+@patch("src.retrieval.http_client.request_with_backoff")
 def test_paged_get_accumulates_pages(mock_request, monkeypatch):
     monkeypatch.setattr(config, "PER_PAGE", 2)
     monkeypatch.setattr(http_client, "PER_PAGE", 2)
