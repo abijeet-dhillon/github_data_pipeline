@@ -13,6 +13,56 @@ In this report the student should write their progress update. Please organize y
 - [Week 7](#cosc-448---tasks-week-7)
 - [Week 8](#cosc-448---tasks-week-8)
 - [Week 9](#cosc-448---tasks-week-9)
+- [Week 10](#cosc-448---tasks-week-10)
+
+---
+
+# COSC 448 - Tasks (Week 10)
+
+## Action Items
+
+- [x] Verify that all GitHub data is being correctly pulled for each entity (repositories, commits, pull requests, issues, contributors).
+- [x] Read documentation and plan for git blame (how blame works, root commit behavior, headers, and how to match blame SHAs to commit objects).
+- [x] Integrate git blame functionality into rest_pipeline.py and update indexing script to make sure all data gets indexed into elastic search.
+- [x] Add files_changed data to commit objects where missing and validate deltas (LOC added/removed/changed).
+- [x] Explore and test the endpoint GET /repos/:owner/:repo/commits/:sha to confirm enrichment fields for diffs, stats, and file metadata.
+- [x] Begin validating schema consistency to ensure all pulled data matches expected fields across the pipeline.
+- [ ] Prepare presentation (include use cases focused on ElasticSearch queries - e.g., contributor metrics, PR–issue linkage, commit churn, reviewer activity).
+
+---
+
+# COSC 448 - Summary (Week 10)
+
+**[GitHub Data Pipeline Repository](https://github.com/abijeet-dhillon/github_data_pipeline/tree/main)**
+
+### 1. **Verification of GitHub entities**
+
+- Re-executed `rest_pipeline.py` and checked each JSON artifact in `output/{owner_repo}` to confirm repositories, commits, pull requests, issues, and contributors are all populated with fresh snapshots.
+- Spot-compared totals with GitHub’s UI/API to ensure pagination and request retries keep the records in sync and that every document carries `repo_name` for downstream joins.
+
+### 2. **Git blame research and planning**
+
+- Reviewed Git blame documentation (range slicing, root commit fallbacks, header semantics) and captured the key behaviors inside the `BLAME_QUERY_BY_REF` / `BLAME_QUERY_BY_OBJECT` helpers.
+- Documented how blame SHAs map to commit objects so later joins can enrich blame ranges with commit stats, URLs, and author metadata.
+
+### 3. **Git blame integration & indexing updates**
+
+- Hooked the blame fetch workflow into `rest_pipeline.py`, writing `repo_blame.json` with nested file → author → range structures plus cached commit lookups.
+- Extended `index_elasticsearch.py` mappings and routing so the new blame dataset (plus existing artifacts) indexes cleanly, ensuring Elasticsearch reflects every JSON file produced by the pipeline.
+
+### 4. **Commit delta enrichment**
+
+- Queried `GET /repos/{owner}/{repo}/commits/{sha}` for commits missing per-file information, recording `files`, `stats`, `files_changed`, and `files_changed_count` to capture LOC churn.
+- Added validation that summed additions/deletions match the stats block before persisting so downstream analytics can rely on accurate delta figures.
+
+### 5. **Endpoint exploration & schema validation**
+
+- Explored the commit-detail endpoint to catalog diff metadata, MIME hints, and patch availability, noting which attributes we persist versus ignore.
+- Ran schema checks comparing produced JSON keys to Elasticsearch mappings, cleaning mismatches and confirming dynamic fields (e.g., blame ranges) are accepted without coercion errors.
+
+### 6. **Presentation prep (in progress)**
+
+- Drafted outline/slides focused on GitHub data pipline construction and ElasticSearch use cases (contributor metrics, PR–issue linkage, churn analysis); polishing visuals and demo flow in the next iteration.
 
 ---
 
