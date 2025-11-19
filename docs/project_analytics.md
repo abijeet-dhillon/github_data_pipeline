@@ -14,6 +14,7 @@ This report summarizes observed performance characteristics, opportunities for o
 
 - **Large `repo_blame` uploads (HTTP 413):** Elasticsearch rejects oversized `_bulk` payloads when many blame documents are sent together (observed on `rollup/rollup`). Mitigate by lowering `HARDCODED_BATCH_SIZE` or raising `http.max_content_length` server-side.
 - **GitHub token exhaustion:** When every Personal Access Token is rate limited, the retrieval layer sleeps for `RATE_LIMIT_TOKEN_RESET_WAIT_SEC`. Operators should provide multiple fresh tokens to avoid hour-long idle periods.
+- **REST pagination limits:** For extremely large repositories (e.g., `flutter/flutter`), the classic `?page=` parameter can return HTTP 422 with “Pagination with the page parameter is not supported...” errors. GitHub recommends cursor-based pagination (“after”/“before”) for those datasets; future work should explore adopting that approach.
 
 ## Performance Analysis
 
