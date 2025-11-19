@@ -50,7 +50,7 @@ from typing import Dict, Any, List, Tuple, Optional
 
 
 # --- configuration ---
-GITHUB_TOKENS      = ["", ""]     
+GITHUB_TOKENS      = [""]     
 GITHUB_TOKEN_INDEX = 0
 USER_AGENT         = "cosc448-initial-pipeline/1.0 (+abijeet)"
 BASE_URL           = "https://api.github.com"
@@ -61,28 +61,31 @@ BACKOFF_BASE_SEC   = 2
 OUTPUT_DIR         = "./output"
 MAX_PAGES_COMMITS  = int(os.getenv("MAX_PAGES_COMMITS", "0"))  # 0 = no cap
 MAX_WAIT_ON_403    = int(os.getenv("MAX_WAIT_ON_403", "180"))
+RATE_LIMIT_TOKEN_RESET_WAIT_SEC = int(
+    os.getenv("RATE_LIMIT_TOKEN_RESET_WAIT_SEC", str(60 * 60))
+)
 ISSUE_DETAIL_CACHE = {}
 COMMIT_CACHE       = {}
 GRAPHQL_URL        = "https://api.github.com/graphql"
 BLAME_EXAMPLE_LIMIT = int(os.getenv("BLAME_EXAMPLE_LIMIT", "5"))
 BLAME_FILE_LIMIT = int(os.getenv("BLAME_FILE_LIMIT", "0"))  # 0 = no limit
 REPOS              = [
-    "carsondrobe/fellas",
+    # "carsondrobe/fellas",
     # "micromatch/micromatch",
     # "laravel-mix/laravel-mix",
     # "standard/standard",
     # "istanbuljs/nyc",
     # "axios/axios",
-    # "rollup/rollup",
-    # "prettier/prettier",
-    # "numpy/numpy",
-    # "flutter/flutter",
-    # "apache/spark",
-    # "reduxjs/redux",
-    # "torvalds/linux",
-    # "grafana/grafana",
-    # "django/django",
-    # "pandas-dev/pandas"
+    "rollup/rollup",
+    "prettier/prettier",
+    "numpy/numpy",
+    "flutter/flutter",
+    "apache/spark",
+    "reduxjs/redux",
+    "torvalds/linux",
+    "grafana/grafana",
+    "django/django",
+    "pandas-dev/pandas"
 ]
 
 
@@ -101,6 +104,15 @@ def sleep_with_jitter(base: float) -> None:
     """Pause execution with +/- 25% jitter to avoid synchronized retries."""
     jitter = base * 0.25 * (0.5 - (os.urandom(1)[0] / 255.0))
     time.sleep(max(0.0, base + jitter))
+
+
+def _sleep_on_rate_limit(reason: str) -> None:
+    """Sleep for a configured interval when every token is still rate limited."""
+    wait_sec = max(0, RATE_LIMIT_TOKEN_RESET_WAIT_SEC)
+    if wait_sec <= 0:
+        return
+    print(f"[rate-limit] {reason}; sleeping {wait_sec}s")
+    time.sleep(wait_sec)
 
 
 def _log_http_error(resp: requests.Response, url: str) -> None:
@@ -241,6 +253,8 @@ def run_graphql_query(query: str, variables: Dict[str, Any]) -> Dict[str, Any]:
     """Execute a GraphQL query with retry/backoff semantics similar to REST."""
     payload = {"query": query, "variables": variables}
     last_exc = None
+    rotated_due_to_rate_limit = False
+    wrapped_on_last_rotation = False
 
     for attempt in range(1, MAX_RETRIES + 1):
         headers = _graphql_headers()
@@ -254,6 +268,8 @@ def run_graphql_query(query: str, variables: Dict[str, Any]) -> Dict[str, Any]:
             continue
 
         if resp.status_code == 200:
+            rotated_due_to_rate_limit = False
+            wrapped_on_last_rotation = False
             data = resp.json()
             if data.get("errors"):
                 messages = ", ".join(
@@ -263,6 +279,8 @@ def run_graphql_query(query: str, variables: Dict[str, Any]) -> Dict[str, Any]:
             return data.get("data") or {}
 
         if resp.status_code == 401:
+            rotated_due_to_rate_limit = False
+            wrapped_on_last_rotation = False
             if _switch_to_next_token():
                 continue
             _log_http_error(resp, GRAPHQL_URL)
@@ -274,8 +292,24 @@ def run_graphql_query(query: str, variables: Dict[str, Any]) -> Dict[str, Any]:
             reset = headers_resp.get("X-RateLimit-Reset")
             retry_after = headers_resp.get("Retry-After")
             is_rate_limited = (remaining == "0") or (reset and str(reset).isdigit())
-            if is_rate_limited and _switch_to_next_token():
-                continue
+            if is_rate_limited:
+                if rotated_due_to_rate_limit:
+                    reason = "GraphQL rate limit persists after cycling tokens"
+                    if wrapped_on_last_rotation:
+                        reason = "GraphQL rate limit persists after cycling through all tokens"
+                    _sleep_on_rate_limit(reason)
+                    rotated_due_to_rate_limit = False
+                    wrapped_on_last_rotation = False
+                    continue
+
+                prev_index = GITHUB_TOKEN_INDEX
+                if _switch_to_next_token():
+                    token_count = len(GITHUB_TOKENS)
+                    wrapped_on_last_rotation = (
+                        token_count > 0 and prev_index == (token_count - 1)
+                    )
+                    rotated_due_to_rate_limit = True
+                    continue
 
             if retry_after and str(retry_after).isdigit():
                 wait_sec = int(retry_after)
@@ -286,9 +320,13 @@ def run_graphql_query(query: str, variables: Dict[str, Any]) -> Dict[str, Any]:
             wait_sec = min(wait_sec, MAX_WAIT_ON_403)
             print(f"[graphql backoff {resp.status_code}] waiting {wait_sec}s for {GRAPHQL_URL}")
             sleep_with_jitter(wait_sec)
+            rotated_due_to_rate_limit = False
+            wrapped_on_last_rotation = False
             continue
 
         if resp.status_code in {400, 404, 410, 422}:
+            rotated_due_to_rate_limit = False
+            wrapped_on_last_rotation = False
             _log_http_error(resp, GRAPHQL_URL)
             break
 
@@ -296,9 +334,13 @@ def run_graphql_query(query: str, variables: Dict[str, Any]) -> Dict[str, Any]:
             delay = BACKOFF_BASE_SEC * (2 ** (attempt - 1))
             print(f"[graphql retry {attempt}/{MAX_RETRIES}] HTTP {resp.status_code} -> sleep {delay:.1f}s")
             sleep_with_jitter(delay)
+            rotated_due_to_rate_limit = False
+            wrapped_on_last_rotation = False
             continue
 
         _log_http_error(resp, GRAPHQL_URL)
+        rotated_due_to_rate_limit = False
+        wrapped_on_last_rotation = False
         break
 
     if last_exc:
@@ -573,6 +615,8 @@ def _request(method: str, url: str, **kwargs) -> requests.Response:
     timeout = kwargs.pop("timeout", REQUEST_TIMEOUT)
     last_exc = None
     TERMINAL_4XX = {400, 404, 410, 422}
+    rotated_due_to_rate_limit = False
+    wrapped_on_last_rotation = False
 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
@@ -585,9 +629,13 @@ def _request(method: str, url: str, **kwargs) -> requests.Response:
             continue
 
         if 200 <= resp.status_code < 300:
+            rotated_due_to_rate_limit = False
+            wrapped_on_last_rotation = False
             return resp
 
         if resp.status_code == 401:
+            rotated_due_to_rate_limit = False
+            wrapped_on_last_rotation = False
             if _switch_to_next_token():
                 continue
             _log_http_error(resp, url)
@@ -602,8 +650,24 @@ def _request(method: str, url: str, **kwargs) -> requests.Response:
             is_rate_limited = (remaining == "0") or (reset and str(reset).isdigit())
             has_retry_after = retry_after and str(retry_after).isdigit()
 
-            if is_rate_limited and _switch_to_next_token():
-                continue
+            if is_rate_limited:
+                if rotated_due_to_rate_limit:
+                    reason = "rate limit persists after cycling tokens"
+                    if wrapped_on_last_rotation:
+                        reason = "rate limit persists after cycling through all tokens"
+                    _sleep_on_rate_limit(reason)
+                    rotated_due_to_rate_limit = False
+                    wrapped_on_last_rotation = False
+                    continue
+
+                prev_index = GITHUB_TOKEN_INDEX
+                if _switch_to_next_token():
+                    token_count = len(GITHUB_TOKENS)
+                    wrapped_on_last_rotation = (
+                        token_count > 0 and prev_index == (token_count - 1)
+                    )
+                    rotated_due_to_rate_limit = True
+                    continue
 
             if has_retry_after:
                 wait_sec = int(retry_after)
@@ -615,9 +679,13 @@ def _request(method: str, url: str, **kwargs) -> requests.Response:
             wait_sec = min(wait_sec, MAX_WAIT_ON_403)
             print(f"[backoff {resp.status_code}] waiting {wait_sec}s for {url}")
             sleep_with_jitter(wait_sec)
+            rotated_due_to_rate_limit = False
+            wrapped_on_last_rotation = False
             continue
 
         if resp.status_code in TERMINAL_4XX:
+            rotated_due_to_rate_limit = False
+            wrapped_on_last_rotation = False
             _log_http_error(resp, url)
             return resp
 
@@ -625,8 +693,12 @@ def _request(method: str, url: str, **kwargs) -> requests.Response:
             delay = BACKOFF_BASE_SEC * (2 ** (attempt - 1))
             print(f"[retry {attempt}/{MAX_RETRIES}] HTTP {resp.status_code} -> sleep {delay:.1f}s")
             sleep_with_jitter(delay)
+            rotated_due_to_rate_limit = False
+            wrapped_on_last_rotation = False
             continue
 
+        rotated_due_to_rate_limit = False
+        wrapped_on_last_rotation = False
         return resp
 
     if last_exc:
