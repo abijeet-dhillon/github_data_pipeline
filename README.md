@@ -82,7 +82,11 @@ Set `LOCAL_SECRETS_FILE` if you keep the file elsewhere. The tokens and credenti
 Run the full automated test suite:
 
 ```bash
+# Unit tests
 pytest tests
+
+# Coverage-focused run
+pytest tests --cov=src.retrieval --cov=src.indexing --cov-report=term-missing
 ```
 
 For coverage details, see the commands in [docs/individual_setup.md](docs/individual_setup.md).
