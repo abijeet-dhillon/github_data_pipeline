@@ -1,172 +1,71 @@
-# COSC 448 – GitHub Data Pipeline
+# COSC 448 – GitHub Data Pipeline & Indexing Suite
 
-## Overview
+## Project Objective
 
-This repository contains the implementation of a modular and extensible **data pipeline for mining GitHub repositories**. The goal of this project is to automate the end-to-end retrieval, processing, and indexing of repository data to support software analytics research.
+This repository houses the end-to-end software analytics platform developed for **COSC 448: Directed Studies – Development and Deployment of a Scalable Data Pipeline for Research** at UBC Okanagan. Guided by the outcomes published in the [course syllabus](docs/cosc448-syllabus.pdf) and the week-by-week deliverables tracked in [docs/weekly_updates.md](docs/weekly_updates.md), the project demonstrates how to:
 
-Developed as part of **COSC 448 (Direct Studies: Development and Deployment of a Scalable Data Pipeline for Research)** at **UBC Okanagan**, this project demonstrates the application of core software engineering principles such as modular design, testing, validation, and documentation. It also aligns with the course outcomes by emphasizing scalable data engineering workflows using **GitHub REST APIs (v3)**, **Elasticsearch**, and modern Python development practices.
+- Automate the retrieval of rich GitHub repository telemetry (metadata, issues, pull requests, commits, contributors, cross-repo references, git blame).
+- Clean, normalize, and cache those datasets in deterministic JSON artifacts under `output/{owner_repo}`.
+- Index every artifact into Elasticsearch with explicit mappings so Kibana and downstream notebooks can power contributor metrics, PR-issue linkage analysis, churn tracking, and reviewer insights.
+- Maintain research-grade code quality through modular architecture, extensive automated tests, and documentation.
 
-The system was built to collect and analyze open-source software data in a reproducible and extensible way, following the same objectives outlined in the course syllabus — namely:
+## System Overview
 
-- Automate the collection and enrichment of software repository data
-- Apply engineering best practices for maintainability and reliability
-- Enable indexing, search, and visualization of collected data through Elasticsearch and Kibana
+The codebase is divided into two cooperative phases:
 
----
+1. **Pipeline (data acquisition)** – The modules in `src/pipeline` execute authenticated REST and GraphQL calls, handle pagination, apply incremental refreshes, and enrich artifacts (e.g., linking PRs to issues, detecting cross-repo mentions, computing git blame summaries). The compatibility wrapper `run_pipeline.py` simply invokes `src.pipeline.runner.main()`.
+2. **Indexing (data publishing)** – The modules in `src/indexing` define Elasticsearch schemas, manage bulk uploads, and enforce consistent index creation. The compatibility wrapper `run_indexing.py` simply invokes `src.indexing.runner.main()`.
 
-## Objectives
+Each phase is independently testable, yet they share conventions such as the `repo_name` join key and deterministic hashing helpers.
 
-The objectives of this project directly reflect the **learning outcomes** of COSC 448:
+## Repository Layout
 
-1. **Design and implementation of a modular data pipeline** for software analytics.
-2. **Automation of data collection** from GitHub repositories using authenticated REST API calls.
-3. **Integration of scalable storage and indexing** through Elasticsearch.
-4. **Testing and validation** to ensure data reliability and code quality.
-5. **Comprehensive documentation** to support reproducibility and transparency.
+```
+├── docs/                     # Supplementary documentation (setup, outputs, analytics, syllabus, weekly reports)
+├── output/                   # Generated JSON artifacts per repository (git-ignored)
+├── run_pipeline.py           # Wrapper that calls src.pipeline.runner.main()
+├── run_indexing.py           # Wrapper that calls src.indexing.runner.main()
+├── src/
+│   ├── pipeline/             # Data collection, GitHub helpers, orchestration
+│   └── indexing/             # Elasticsearch config, schemas, client, orchestration
+├── tests/                    # Unit tests for pipeline and indexing modules
+├── requirements.txt          # Python dependencies
+└── README.md                 # You are here
+```
 
----
+Refer to:
 
-## Requirements
+- [docs/setup.md](docs/setup.md) for environment preparation, execution steps, and test commands.
+- [docs/script_overview.md](docs/script_overview.md) for per-module responsibilities and expected inputs/outputs.
+- [docs/pipeline_outputs.md](docs/pipeline_outputs.md) for JSON field explanations.
+- [docs/project_analytics.md](docs/project_analytics.md) for performance notes, known issues, and optimization ideas.
 
-**Software:**
-
-- Python 3.10+
-- Docker
-- Elasticsearch 8.x (local or remote)
-- GitHub Personal Access Token (with read access to public repositories)
-
-All dependencies can be installed via:
+## Quick Start
 
 ```bash
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
+
+# Run the GitHub data pipeline (edit src/pipeline/config.py for repo list/tokens)
+python3 run_pipeline.py
+
+# Index JSON artifacts into Elasticsearch (configure src/indexing/config.py)
+python3 run_indexing.py
 ```
 
----
-
-## Setup and Execution
-
-Below is the full process for retrieving, ingesting, and indexing the GitHub data into a local ElasticSearch database. This sequence ensures that the system is configured correctly and that all required services are running before data ingestion.
-
-### Things To Remember
-
-1. Add your GitHub API token(s) inside `pipeline.py`.  
-   This token is used for authenticated access to the GitHub REST/GraphQL API and helps prevents rate limiting.
-
-2. Set your Elasticsearch authorization inside `index_elasticsearch.py`.  
-   Provide the username, password, API, and URL for your local or hosted Elasticsearch instance.
-
----
-
-### Steps
-
-#### 1. Clone the repository
+Run the full automated test suite:
 
 ```bash
-git clone https://github.com/abijeet-dhillon/github_data_pipeline.git
-cd github_data_pipeline
+pytest tests
 ```
 
-#### 2. Open Docker
+For coverage details, see the commands in [docs/setup.md](docs/setup.md).
 
-Ensure Docker Desktop (or an equivalent daemon) is running before creating/starting containers.
+## Documentation & Progress Tracking
 
-#### 3. Activate the virtual environment
+- **Syllabus reference:** [docs/cosc448-syllabus.pdf](docs/cosc448-syllabus.pdf)
+- **Weekly progress:** [docs/weekly_updates.md](docs/weekly_updates.md)
+- **Operational docs:** [docs/setup.md](docs/setup.md), [docs/script_overview.md](docs/script_overview.md), [docs/pipeline_outputs.md](docs/pipeline_outputs.md), [docs/project_analytics.md](docs/project_analytics.md)
 
-```bash
-source venv/bin/activate
-```
-
-#### 4. Retrieve GitHub data
-
-Run the following command to collect all repository data:
-
-```bash
-python3 pipeline.py
-```
-
-Inside this file:
-
-- Populate the `GITHUB_TOKENS` list with one or more personal access tokens; the pipeline automatically rotates through them (and wraps back to the first token) when rate limits are reached.
-- Specify the repositories you want to retrieve, e.g., `owner/repo`.
-- The script fetches metadata, issues, pull requests, commits, contributors, cross-references, and git blame data, writing JSON artifacts such as `repo_meta.json`, `issues.json`, `pull_requests.json`, `commits.json`, `repo_blame.json`, and more.
-- Every document is stamped with `repo_name` for easier indexing/filtering.
-
-Note: Depending on the size of the repositories, data retrieval time may vary. Please wait for data retrieval to finish before moving onto the next step.
-
-#### 5. Start local Elasticsearch in Docker
-
-From the project directory:
-
-```bash
-curl -fsSL https://elastic.co/start-local | sh
-```
-
-This will create and start a Docker container for your local ElasticSearch instance and provide you with an ElasticSearch username, password, and API key. After running the script, you can access Elastic services at the following endpoints:
-
-- Elasticsearch: http://localhost:9200
-- Kibana: http://localhost:5601
-
-#### 6. Index data into Elasticsearch
-
-Once data collection is complete:
-
-```bash
-python3 index_elasticsearch.py
-```
-
-This script ingests all JSON files under `/output/`—including the new blame dataset—and indexes them into your configured Elasticsearch instance.  
-It automatically creates/updates mappings for each document type, ensures `repo_name` is present, and verifies that every artifact generated by `pipeline.py` ends up in its corresponding Elasticsearch index.
-
-#### 7. Verify data in Kibana
-
-Access Kibana at [http://localhost:5601](http://localhost:5601) or through your preferred analytics interface.  
-You can search and visualize data using indices such as `github_data_*`.
-
-#### 8. Shut everything down
-
-When finished, stop and remove the containers:
-
-```bash
-cd elastic-start-local
-docker compose down
-```
-
----
-
-## Testing
-
-The repository includes a comprehensive test suite, ensuring that all major components (API handling, pagination, error logging, and file generation) are validated.
-
-Run the tests with:
-
-```bash
-pytest -v --cov=rest_pipeline --cov-report=term-missing
-```
-
----
-
-## Code Quality and Documentation
-
-This project follows the software engineering standards outlined in the COSC 448 syllabus:
-
-- All scripts are fully documented with descriptive docstrings and inline comments (where applicable).
-- Functions and modules follow PEP 8 style guidelines for readability.
-- Testing and logging are integrated throughout for reliability and traceability.
-- Additional Docs – The docs/ folder includes weekly progress updates (`docs/weekly_updates.md`) and a detailed explanation of every JSON artifact the pipeline produces (`docs/pipeline_outputs.md`).
-
-By maintaining clear documentation, consistent naming, and structured commits, the project meets the expectations for professional, research-grade code in a collaborative academic setting.
-
----
-
-## Authors
-
-**Abijeet Dhillon**  
-UBC Okanagan – COSC 448: Directed Studies  
-Instructor: Dr. Gema Rodríguez-Pérez  
-Email: gema.rodriguezperez@ubc.ca
-
----
-
-## License
-
-This repository is available for educational and research purposes under the MIT License.
+These artifacts ensure the project satisfies COSC 448’s emphasis on reproducibility, communication, and iterative improvement while enabling other researchers to extend or repurpose the pipeline.

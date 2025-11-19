@@ -221,3 +221,14 @@ Each time `pipeline.py` runs, it creates a folder at `output/{owner_repo}` conta
 2. **Fields mirror GitHub unless enriched** – The pipeline preserves GitHub’s field names and shapes; any additional fields (such as `files_changed` or `matching_commit`) are clearly additive.
 3. **Delivered in original order** – Arrays keep the ordering supplied by GitHub, enabling reproducible timelines and comparisons.
 4. **Data provenance is obvious** – Each section above states exactly which API endpoint or derived logic produced the records, eliminating ambiguity when analyzing the JSON.
+
+---
+
+## Operational Notes & Indexing Considerations
+
+- **Incremental refreshes:** `src/pipeline/collectors.py` automatically detects the most recent timestamps or commit SHAs so repeat runs only fetch deltas. Cached files inside `output/{owner_repo}` are merged with new records to preserve historical context.
+- **Blame payload size:** `repo_blame.json` can be large because it bundles every file, range, and enrichment. When indexing, lower the batch size (see `HARDCODED_BATCH_SIZE` in `src/indexing/config.py`) or increase Elasticsearch’s `http.max_content_length` to avoid HTTP 413 errors.
+- **Schema alignment:** The mappings defined in `src/indexing/schema.py` mirror the structures described above. Whenever a new field is added to the pipeline, update `schema.py` and this document together to keep ingestion predictable.
+- **Downstream indexing:** Each JSON file maps one-to-one with an Elasticsearch index (see `FILE_TO_INDEX`). Because every record contains `repo_name`, data consumers can safely join across indices or filter by repository without extra transformations.
+
+Keep this document close when creating Kibana dashboards or analytical notebooks—it doubles as the contract between the extraction phase and any downstream tooling.
