@@ -1,6 +1,6 @@
-# Setup & Usage Guide
+# Individual Component Setup & Usage Guide
 
-This document explains how to prepare the environment, configure credentials, execute the retrieval/indexing phases, and run the associated tests. The flow mirrors the expectations outlined in the COSC 448 syllabus and the weekly progress targets.
+This document explains how to prepare the environment, configure credentials, execute the retrieval or indexing phases independently, and run the associated tests. The flow mirrors the expectations outlined in the COSC 448 syllabus and the weekly progress targets.
 
 ## 1. Prerequisites
 

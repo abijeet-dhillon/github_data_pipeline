@@ -34,7 +34,8 @@ This reference describes the purpose of each script/module, the data it expects,
 
 | File                        | Purpose                                                                     |
 | --------------------------- | --------------------------------------------------------------------------- |
-| `docs/setup.md`             | Installation, configuration, execution, and testing instructions.           |
+| `docs/pipeline_setup.md`    | Steps for running the full retrieval → indexing pipeline.                   |
+| `docs/individual_setup.md`  | Instructions for operating each component independently (incl. tests).      |
 | `docs/pipeline_outputs.md`  | Field-by-field explanation of every JSON artifact produced by the retrieval phase. |
 | `docs/project_analytics.md` | Improvement opportunities, known bugs, and performance analysis notes.      |
 | `docs/weekly_updates.md`    | Running log of course deliverables, action items, and completed milestones. |

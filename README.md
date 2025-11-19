@@ -34,7 +34,8 @@ Each phase is independently testable, yet they share conventions such as the `re
 
 Refer to:
 
-- [docs/setup.md](docs/setup.md) for environment preparation, execution steps, and test commands.
+- [docs/pipeline_setup.md](docs/pipeline_setup.md) for running the full retrieval → indexing pipeline.
+- [docs/individual_setup.md](docs/individual_setup.md) for operating retrieval or indexing independently and running tests.
 - [docs/script_overview.md](docs/script_overview.md) for per-module responsibilities and expected inputs/outputs.
 - [docs/pipeline_outputs.md](docs/pipeline_outputs.md) for JSON field explanations.
 - [docs/project_analytics.md](docs/project_analytics.md) for performance notes, known issues, and optimization ideas.
@@ -46,10 +47,13 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-# Run the GitHub data retrieval workflow (edit src/retrieval/config.py for repo list)
+# Run the full pipeline (retrieval followed by indexing)
+python3 src/pipeline/runner.py
+
+# (Optional) Run retrieval only (edit src/retrieval/config.py for repo list)
 python3 src/retrieval/runner.py
 
-# Index JSON artifacts into Elasticsearch (configure src/indexing/config.py)
+# (Optional) Run indexing only (configure src/indexing/config.py)
 python3 src/indexing/runner.py
 ```
 
@@ -80,12 +84,12 @@ Run the full automated test suite:
 pytest tests
 ```
 
-For coverage details, see the commands in [docs/setup.md](docs/setup.md).
+For coverage details, see the commands in [docs/individual_setup.md](docs/individual_setup.md).
 
 ## Documentation & Progress Tracking
 
 - **Syllabus reference:** [docs/cosc448-syllabus.pdf](docs/cosc448-syllabus.pdf)
 - **Weekly progress:** [docs/weekly_updates.md](docs/weekly_updates.md)
-- **Operational docs:** [docs/setup.md](docs/setup.md), [docs/script_overview.md](docs/script_overview.md), [docs/pipeline_outputs.md](docs/pipeline_outputs.md), [docs/project_analytics.md](docs/project_analytics.md)
+- **Operational docs:** [docs/pipeline_setup.md](docs/pipeline_setup.md), [docs/individual_setup.md](docs/individual_setup.md), [docs/script_overview.md](docs/script_overview.md), [docs/pipeline_outputs.md](docs/pipeline_outputs.md), [docs/project_analytics.md](docs/project_analytics.md)
 
 These artifacts ensure the project satisfies COSC 448’s emphasis on reproducibility, communication, and iterative improvement while enabling other researchers to extend or repurpose the pipeline.
