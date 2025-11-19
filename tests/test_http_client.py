@@ -121,3 +121,54 @@ def test_paged_get_accumulates_pages(mock_request, monkeypatch):
     ]
     results = http_client.paged_get("url", "o", "r")
     assert [entry["id"] for entry in results] == [1, 2, 3]
+
+
+@patch("src.retrieval.http_client.requests.post")
+def test_run_graphql_query_success(mock_post):
+    mock_post.return_value = _make_resp(200, {"data": {"ok": True}})
+    result = http_client.run_graphql_query("query", {})
+    assert result == {"ok": True}
+
+
+@patch("src.retrieval.http_client.requests.post")
+def test_run_graphql_query_handles_401(mock_post, monkeypatch):
+    mock_post.side_effect = [_make_resp(401, {}), _make_resp(200, {"data": {"ok": True}})]
+    original = http_client.GITHUB_TOKENS[:]
+    try:
+        monkeypatch.setattr(http_client, "GITHUB_TOKENS", ["a", "b"], raising=False)
+        http_client.GITHUB_TOKEN_INDEX = 0
+        result = http_client.run_graphql_query("query", {})
+        assert result == {"ok": True}
+    finally:
+        http_client.GITHUB_TOKENS[:] = original
+
+
+@patch("src.retrieval.http_client.sleep_on_rate_limit")
+@patch("src.retrieval.http_client.sleep_with_jitter", lambda *_: None)
+@patch("src.retrieval.http_client.requests.post")
+def test_run_graphql_query_handles_rate_limit(mock_post, mock_sleep, monkeypatch):
+    headers = {"X-RateLimit-Remaining": "0"}
+    mock_post.side_effect = [
+        _make_resp(403, {}, headers=headers),
+        _make_resp(403, {}, headers=headers),
+        _make_resp(200, {"data": {"ok": True}}),
+    ]
+    original = http_client.GITHUB_TOKENS[:]
+    try:
+        monkeypatch.setattr(http_client, "GITHUB_TOKENS", ["a", "b"], raising=False)
+        http_client.GITHUB_TOKEN_INDEX = 0
+        result = http_client.run_graphql_query("query", {})
+        assert result == {"ok": True}
+        assert mock_sleep.called
+    finally:
+        http_client.GITHUB_TOKENS[:] = original
+
+
+@patch("src.retrieval.http_client.log_http_error")
+@patch("src.retrieval.http_client.SESSION")
+def test_request_terminal_error_returns_resp(mock_session, mock_log):
+    resp = _make_resp(404, {})
+    mock_session.request.return_value = resp
+    result = http_client.request_with_backoff("GET", "url")
+    assert result is resp
+    mock_log.assert_called_once()

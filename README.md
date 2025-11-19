@@ -2,7 +2,7 @@
 
 ## Project Objective
 
-This repository houses the end-to-end software analytics platform developed for **COSC 448: Directed Studies – Development and Deployment of a Scalable Data Pipeline for Research** at UBC Okanagan. Guided by the outcomes published in the [course syllabus](docs/cosc448-syllabus.pdf) and the week-by-week deliverables tracked in [docs/weekly_updates.md](docs/weekly_updates.md), the project demonstrates how to:
+This repository houses the end-to-end software analytics platform developed for **COSC 448: Directed Studies – Development and Deployment of a Scalable Data Pipeline for Research** at UBC Okanagan. Guided by the week-by-week deliverables tracked in [docs/weekly_updates.md](docs/weekly_updates.md), the project demonstrates how to:
 
 - Automate the retrieval of rich GitHub repository telemetry (metadata, issues, pull requests, commits, contributors, cross-repo references, git blame).
 - Clean, normalize, and cache those datasets in deterministic JSON artifacts under `output/{owner_repo}`.
@@ -21,10 +21,11 @@ Each phase is independently testable, yet they share conventions such as the `re
 ## Repository Layout
 
 ```
-├── docs/                     # Supplementary documentation (setup, outputs, analytics, syllabus, weekly reports)
+├── docs/                     # Supplementary documentation (setup workflows, outputs, analytics, weekly reports)
 ├── output/                   # Generated JSON artifacts per repository (git-ignored)
-├── run_pipeline.py           # Legacy wrapper (delegates to retrieval)
+├── run_pipeline.py           # Legacy wrapper (delegates to full pipeline)
 ├── src/
+│   ├── pipeline/             # Orchestrator that runs retrieval then indexing
 │   ├── retrieval/            # Data collection, GitHub helpers, orchestration
 │   └── indexing/             # Elasticsearch config, schemas, client, orchestration
 ├── tests/                    # Unit tests for retrieval and indexing modules
@@ -88,7 +89,6 @@ For coverage details, see the commands in [docs/individual_setup.md](docs/indivi
 
 ## Documentation & Progress Tracking
 
-- **Syllabus reference:** [docs/cosc448-syllabus.pdf](docs/cosc448-syllabus.pdf)
 - **Weekly progress:** [docs/weekly_updates.md](docs/weekly_updates.md)
 - **Operational docs:** [docs/pipeline_setup.md](docs/pipeline_setup.md), [docs/individual_setup.md](docs/individual_setup.md), [docs/script_overview.md](docs/script_overview.md), [docs/pipeline_outputs.md](docs/pipeline_outputs.md), [docs/project_analytics.md](docs/project_analytics.md)
 

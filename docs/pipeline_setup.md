@@ -39,7 +39,7 @@ python3 src/pipeline/runner.py
 
 ## 6. Verify Results
 - Inspect `output/{owner_repo}` to confirm fresh JSON artifacts.
-- Open Kibana (default http://localhost:5601) and create index patterns for the datasets (`issues*`, `commits*`, `repo_meta*`, etc.).
+- Open Kibana (default http://localhost:5601) and create an index pattern that matches everything (e.g., `*` or `c*`), selecting **None** for the timestamp field. You can additionally add per-dataset patterns (`issues*`, `commits*`, etc.) once the global pattern is in place.
 
 ## 7. Shut Down Elasticsearch
 When finished, stop/remove the local containers:

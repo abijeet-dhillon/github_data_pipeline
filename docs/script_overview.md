@@ -6,8 +6,9 @@ This reference describes the purpose of each script/module, the data it expects,
 
 | Script/Module                | Purpose                                                    | Expected Inputs                                                                   | Service Provided                                                                            |
 | --------------------------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `src/pipeline/runner.py`    | Orchestrates the full workflow (retrieval → indexing)      | Optional repo overrides + optional indexing CLI args                              | Guarantees retrieval finishes before indexing starts; one command for the full pipeline.   |
+| `run_pipeline.py`           | Legacy wrapper delegating to `src/pipeline/runner.py`      | Same as above; kept for backward compatibility                                   | Allows existing tooling/scripts that invoke `run_pipeline.py` to continue working.         |
 | `src/retrieval/runner.py`   | Primary CLI module for the retrieval workflow              | Optional CLI repo arguments; GitHub tokens configured in `src/retrieval/config.py` | Launches the GitHub data retrieval workflow without auxiliary wrappers.                    |
-| `run_pipeline.py`           | Legacy wrapper delegating to `src.retrieval.runner.main()` | Same as above; kept for backward compatibility                                   | Allows existing tooling/scripts that invoke `run_pipeline.py` to continue working.         |
 | `src/indexing/runner.py`    | CLI module for indexing                                   | CLI args defined in `src/indexing/config.py`                                      | Bootstraps Elasticsearch indexing using the modular package.                               |
 
 ## Retrieval Modules (`src/retrieval`)

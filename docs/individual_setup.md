@@ -1,6 +1,6 @@
 # Individual Component Setup & Usage Guide
 
-This document explains how to prepare the environment, configure credentials, execute the retrieval or indexing phases independently, and run the associated tests. The flow mirrors the expectations outlined in the COSC 448 syllabus and the weekly progress targets.
+This document explains how to prepare the environment, configure credentials, execute the retrieval or indexing phases independently, and run the associated tests.
 
 ## 1. Prerequisites
 
@@ -62,7 +62,7 @@ The repository splits tests between retrieval and indexing layers. Use the follo
 
 ### Retrieval Tests
 
-```bash
+````bash
 # Unit tests
 pytest tests/test_collectors.py tests/test_config.py tests/test_http_client.py \
        tests/test_linkers.py tests/test_runner.py
@@ -71,7 +71,6 @@ pytest tests/test_collectors.py tests/test_config.py tests/test_http_client.py \
 pytest tests/test_collectors.py tests/test_config.py tests/test_http_client.py \
        tests/test_linkers.py tests/test_runner.py \
        --cov=src.retrieval --cov-report=term-missing
-```
 
 ### Indexing Tests
 
@@ -84,7 +83,7 @@ pytest tests/test_es_client.py tests/test_index_schema.py tests/test_indexer.py 
 pytest tests/test_es_client.py tests/test_index_schema.py tests/test_indexer.py \
        tests/test_indexing_config.py tests/test_indexing_runner.py \
        --cov=src.indexing --cov-report=term-missing
-```
+````
 
 ### Full Suite
 
@@ -98,5 +97,3 @@ pytest tests --cov=src.retrieval --cov=src.indexing --cov-report=term-missing
 - **GitHub rate limits:** The retrieval layer prints retries and token rotations; monitor stdout for warning messages.
 - **Elasticsearch payloads:** If you encounter HTTP 413 errors while indexing `repo_blame`, reduce `HARDCODED_BATCH_SIZE` or raise `http.max_content_length` server-side (see [docs/project_analytics.md](project_analytics.md)).
 - **Kibana validation:** After indexing, create index patterns (e.g., `issues*`, `commits*`, `repo_blame*`) and run exploratory queries to verify fields/mappings.
-
-Following this checklist ensures anyone can reproduce the dataset end-to-end, aligning with the reproducibility and documentation requirements described in the course syllabus.

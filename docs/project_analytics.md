@@ -8,6 +8,7 @@ This report summarizes observed performance characteristics, opportunities for o
 2. **Parallel Repository Processing** – `src.retrieval.runner.process_repo()` runs serially. A worker pool (with safeguards for GitHub rate limits) could shorten end-to-end extraction when targeting many repositories.
 3. **Incremental Indexing** – Today indexing rewrites entire indices. Tracking `_id` hashes and using partial updates would reduce bulk payloads for reruns.
 4. **Observability Hooks** – Streaming metrics (requests per minute, retry counts, index latency) to Prometheus or StatsD would make regressions visible sooner and satisfy future research instrumentation goals.
+5. **GraphQL-centric Retrieval** – Migrating more endpoints to GitHub’s v4 GraphQL API could cut runtime, but the v3 REST API still exposes the richest data for bulk dumps. Any migration would need careful auditing to avoid losing fields.
 
 ## Known Bugs / Risks
 
@@ -16,7 +17,7 @@ This report summarizes observed performance characteristics, opportunities for o
 
 ## Performance Analysis
 
-- **Extraction Throughput:** Using two GitHub tokens and default backoff settings, the retrieval workflow processes a large repository (e.g., `rollup/rollup`) in ~10–12 minutes, driven primarily by commit pagination and blame GraphQL calls. Incremental runs that leverage cached JSON finish significantly faster because only delta issues/commits are requested.
+- **Extraction Throughput:** Large repositories can take well over thirty minutes to process end-to-end because commit pagination, blame lookups, and enrichment requests scale with repository history. Incremental runs that leverage cached JSON finish significantly faster because only delta issues/commits are requested.
 - **Indexing Latency:** Most datasets ingest at ~5–7k docs/sec with Elasticsearch running locally via `elastic-start-local`. `repo_blame` is the outlier (bulk uploads often approach the default 100MB content limit); tuning batch sizes or pre-chunking files keeps indexing in a stable 1–2k docs/sec range.
 - **Test Suite Duration:** `pytest tests` completes in ~0.1s on a modern laptop because collectors and indexers rely on mocks. This encourages frequent regression testing after each code change.
 
