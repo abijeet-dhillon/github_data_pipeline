@@ -72,21 +72,22 @@ GRAPHQL_URL        = "https://api.github.com/graphql"
 BLAME_EXAMPLE_LIMIT = int(os.getenv("BLAME_EXAMPLE_LIMIT", "5"))
 BLAME_FILE_LIMIT = int(os.getenv("BLAME_FILE_LIMIT", "0"))  # 0 = no limit
 REPOS              = [
+    "carsondrobe/fellas"
     # "micromatch/micromatch",
     # "laravel-mix/laravel-mix",
     # "standard/standard",
     # "istanbuljs/nyc",
     # "axios/axios",
     # "rollup/rollup",
-    "flutter/flutter",
-    "apache/spark",
-    "reduxjs/redux",
-    "torvalds/linux",
-    "grafana/grafana",
-    "django/django",
-    "prettier/prettier",
-    "numpy/numpy",
-    "pandas-dev/pandas"
+    # "flutter/flutter",
+    # "apache/spark",
+    # "reduxjs/redux",
+    # "torvalds/linux",
+    # "grafana/grafana",
+    # "django/django",
+    # "prettier/prettier",
+    # "numpy/numpy",
+    # "pandas-dev/pandas"
 ]
 
 
@@ -266,7 +267,7 @@ def run_graphql_query(query: str, variables: Dict[str, Any]) -> Dict[str, Any]:
             delay = BACKOFF_BASE_SEC * (2 ** (attempt - 1))
             print(f"[graphql retry {attempt}/{MAX_RETRIES}] {exc} -> sleep {delay:.1f}s")
             sleep_with_jitter(delay)
-            print(f"Done sleeping, resuming pipeline...")
+            print(f"    done sleeping, resuming pipeline...")
             continue
 
         if resp.status_code == 200:
@@ -300,7 +301,7 @@ def run_graphql_query(query: str, variables: Dict[str, Any]) -> Dict[str, Any]:
                     if wrapped_on_last_rotation:
                         reason = "GraphQL rate limit persists after cycling through all tokens"
                     _sleep_on_rate_limit(reason)
-                    print(f"Done sleeping, resuming pipeline...")
+                    print(f"  done sleeping, resuming pipeline...")
                     rotated_due_to_rate_limit = False
                     wrapped_on_last_rotation = False
                     continue
@@ -323,7 +324,7 @@ def run_graphql_query(query: str, variables: Dict[str, Any]) -> Dict[str, Any]:
             wait_sec = min(wait_sec, MAX_WAIT_ON_403)
             print(f"[graphql backoff {resp.status_code}] waiting {wait_sec}s for {GRAPHQL_URL}")
             sleep_with_jitter(wait_sec)
-            print(f"Done sleeping, resuming pipeline...")
+            print(f"  done sleeping, resuming pipeline...")
             rotated_due_to_rate_limit = False
             wrapped_on_last_rotation = False
             continue
@@ -338,7 +339,7 @@ def run_graphql_query(query: str, variables: Dict[str, Any]) -> Dict[str, Any]:
             delay = BACKOFF_BASE_SEC * (2 ** (attempt - 1))
             print(f"[graphql retry {attempt}/{MAX_RETRIES}] HTTP {resp.status_code} -> sleep {delay:.1f}s")
             sleep_with_jitter(delay)
-            print(f"Done sleeping, resuming pipeline...")
+            print(f"  done sleeping, resuming pipeline...")
             rotated_due_to_rate_limit = False
             wrapped_on_last_rotation = False
             continue
@@ -688,7 +689,7 @@ def _request(method: str, url: str, **kwargs) -> requests.Response:
             delay = BACKOFF_BASE_SEC * (2 ** (attempt - 1))
             print(f"[retry {attempt}/{MAX_RETRIES}] {e} -> sleep {delay:.1f}s")
             sleep_with_jitter(delay)
-            print(f"Done sleeping, resuming pipeline...")
+            print(f"  done sleeping, resuming pipeline...")
             last_exc = e
             continue
 
@@ -720,7 +721,7 @@ def _request(method: str, url: str, **kwargs) -> requests.Response:
                     if wrapped_on_last_rotation:
                         reason = "rate limit persists after cycling through all tokens"
                     _sleep_on_rate_limit(reason)
-                    print(f"Done sleeping, resuming pipeline...")
+                    print(f"  done sleeping, resuming pipeline...")
                     rotated_due_to_rate_limit = False
                     wrapped_on_last_rotation = False
                     continue
@@ -744,7 +745,7 @@ def _request(method: str, url: str, **kwargs) -> requests.Response:
             wait_sec = min(wait_sec, MAX_WAIT_ON_403)
             print(f"[backoff {resp.status_code}] waiting {wait_sec}s for {url}")
             sleep_with_jitter(wait_sec)
-            print(f"Done sleeping, resuming pipeline...")
+            print(f"  done sleeping, resuming pipeline...")
             rotated_due_to_rate_limit = False
             wrapped_on_last_rotation = False
             continue
@@ -759,7 +760,7 @@ def _request(method: str, url: str, **kwargs) -> requests.Response:
             delay = BACKOFF_BASE_SEC * (2 ** (attempt - 1))
             print(f"[retry {attempt}/{MAX_RETRIES}] HTTP {resp.status_code} -> sleep {delay:.1f}s")
             sleep_with_jitter(delay)
-            print(f"Done sleeping, resuming pipeline...")
+            print(f"  done sleeping, resuming pipeline...")
             rotated_due_to_rate_limit = False
             wrapped_on_last_rotation = False
             continue
