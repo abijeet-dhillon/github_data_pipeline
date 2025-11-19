@@ -46,11 +46,12 @@ import time
 import datetime as dt
 import requests
 from collections import Counter, defaultdict
-from typing import Dict, Any, List, Tuple, Optional
+from typing import Dict, Any, List, Tuple, Optional, Set
+from urllib.parse import quote_plus
 
 
 # --- configuration ---
-GITHUB_TOKENS      = [""]     
+GITHUB_TOKENS      = ["", ""]     
 GITHUB_TOKEN_INDEX = 0
 USER_AGENT         = "cosc448-initial-pipeline/1.0 (+abijeet)"
 BASE_URL           = "https://api.github.com"
@@ -64,6 +65,7 @@ MAX_WAIT_ON_403    = int(os.getenv("MAX_WAIT_ON_403", "180"))
 RATE_LIMIT_TOKEN_RESET_WAIT_SEC = int(
     os.getenv("RATE_LIMIT_TOKEN_RESET_WAIT_SEC", str(60 * 60))
 )
+INCREMENTAL_LOOKBACK_SEC = int(os.getenv("INCREMENTAL_LOOKBACK_SEC", "300"))
 ISSUE_DETAIL_CACHE = {}
 COMMIT_CACHE       = {}
 GRAPHQL_URL        = "https://api.github.com/graphql"
@@ -71,21 +73,21 @@ BLAME_EXAMPLE_LIMIT = int(os.getenv("BLAME_EXAMPLE_LIMIT", "5"))
 BLAME_FILE_LIMIT = int(os.getenv("BLAME_FILE_LIMIT", "0"))  # 0 = no limit
 REPOS              = [
     # "carsondrobe/fellas",
-    # "micromatch/micromatch",
+    "micromatch/micromatch"
     # "laravel-mix/laravel-mix",
     # "standard/standard",
     # "istanbuljs/nyc",
     # "axios/axios",
-    "rollup/rollup",
-    "prettier/prettier",
-    "numpy/numpy",
-    "flutter/flutter",
-    "apache/spark",
-    "reduxjs/redux",
-    "torvalds/linux",
-    "grafana/grafana",
-    "django/django",
-    "pandas-dev/pandas"
+    # "rollup/rollup",
+    # "numpy/numpy",
+    # "flutter/flutter",
+    # "apache/spark",
+    # "reduxjs/redux",
+    # "torvalds/linux",
+    # "grafana/grafana",
+    # "django/django",
+    # "prettier/prettier",
+    # "pandas-dev/pandas"
 ]
 
 
@@ -551,6 +553,15 @@ def collect_repo_blame(owner: str,
             "error": "GitHub token required for GraphQL blame queries",
         }
 
+    cached_doc = _load_cached_dict(owner, repo, "repo_blame.json")
+    cached_head = _cached_blame_head_sha(cached_doc)
+    current_head = next((c.get("sha") for c in commits if c.get("sha")), None)
+
+    if cached_doc and cached_head and current_head and cached_head == current_head:
+        cached_doc["generated_at"] = generated_at
+        cached_doc["head_commit_sha"] = current_head
+        return cached_doc
+
     repo_files = list_repo_files(owner, repo, default_branch)
     if not repo_files:
         print(f"[warn] unable to enumerate files for {repo_full}@{default_branch}")
@@ -566,14 +577,57 @@ def collect_repo_blame(owner: str,
         repo_files = repo_files[:BLAME_FILE_LIMIT]
         print(f"[info] limiting blame files for {repo_full} to first {BLAME_FILE_LIMIT} entries")
 
-    # Build a quick lookup so blame enrichment can embed commit metadata without refetching.
+    desired_files = repo_files
+    existing_files = {
+        entry.get("path"): entry
+        for entry in (cached_doc.get("files") or [])
+        if entry.get("path")
+    }
+    for path in list(existing_files.keys()):
+        if path not in desired_files:
+            existing_files.pop(path, None)
+
+    needs_refresh: Set[str] = {path for path in desired_files if path not in existing_files}
+    if cached_doc and cached_head and current_head and cached_head != current_head:
+        changed = _get_changed_files_between_refs(owner, repo, cached_head, current_head)
+        if changed is None:
+            needs_refresh = set(desired_files)
+        else:
+            for info in changed:
+                path = info.get("path")
+                prev = info.get("previous")
+                status = (info.get("status") or "").lower()
+                if status == "removed":
+                    if path:
+                        existing_files.pop(path, None)
+                    if prev:
+                        existing_files.pop(prev, None)
+                    continue
+                if prev and prev != path:
+                    existing_files.pop(prev, None)
+                if path and path in desired_files:
+                    needs_refresh.add(path)
+
+    refresh_paths = [path for path in desired_files if path in needs_refresh]
+    existing_count_matches = len(existing_files) == len(desired_files)
+    if not refresh_paths and existing_files and existing_count_matches:
+        return {
+            "repo_name": repo_full,
+            "ref": default_branch,
+            "files": [existing_files[path] for path in desired_files if path in existing_files],
+            "generated_at": generated_at,
+            "head_commit_sha": current_head or cached_head,
+        }
+
     commit_lookup = {
         c.get("sha"): c
         for c in commits
         if c.get("sha")
     }
+
     files_doc: List[Dict[str, Any]] = []
-    for idx, file_path in enumerate(repo_files, 1):
+    processed = 0
+    for file_path in refresh_paths:
         try:
             blame_payload = fetch_file_blame(owner, repo, default_branch, file_path)
         except Exception as exc:
@@ -586,7 +640,7 @@ def collect_repo_blame(owner: str,
             continue
 
         summary = summarize_blame_ranges(ranges, commit_lookup, owner, repo)
-        files_doc.append({
+        existing_files[file_path] = {
             "path": file_path,
             "ref": default_branch,
             "root_commit_oid": blame_payload.get("root_commit_oid"),
@@ -594,15 +648,21 @@ def collect_repo_blame(owner: str,
             "total_lines": summary["total_lines"],
             "authors": summary["authors"],
             "examples": summary["examples"],
-        })
-        if idx % 50 == 0:
-            print(f"    processed blame for {idx} files in {repo_full}...")
+        }
+        processed += 1
+        if processed % 50 == 0:
+            print(f"    processed blame for {processed} updated files in {repo_full}...")
+
+    for path in desired_files:
+        if path in existing_files:
+            files_doc.append(existing_files[path])
 
     return {
         "repo_name": repo_full,
         "ref": default_branch,
         "files": files_doc,
         "generated_at": generated_at,
+        "head_commit_sha": current_head or cached_head,
     }
 
 
@@ -740,6 +800,122 @@ def _paged_get(url: str, owner: str, repo: str, *, max_pages: int = 0) -> List[D
     return results
 
 
+# --- cached dataset helpers ---
+def _repo_cache_dir(owner: str, repo: str) -> str:
+    return os.path.join(OUTPUT_DIR, f"{owner}_{repo}")
+
+
+def _cache_file_path(owner: str, repo: str, filename: str) -> str:
+    return os.path.join(_repo_cache_dir(owner, repo), filename)
+
+
+def _load_cached_list(owner: str, repo: str, filename: str) -> List[Dict[str, Any]]:
+    path = _cache_file_path(owner, repo, filename)
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        if isinstance(data, list):
+            return data
+    except Exception as exc:
+        print(f"[warn] unable to read cached {filename} for {owner}/{repo}: {exc}")
+    return []
+
+
+def _load_cached_dict(owner: str, repo: str, filename: str) -> Dict[str, Any]:
+    path = _cache_file_path(owner, repo, filename)
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        if isinstance(data, dict):
+            return data
+    except Exception as exc:
+        print(f"[warn] unable to read cached {filename} for {owner}/{repo}: {exc}")
+    return {}
+
+
+def _parse_github_timestamp(raw: Optional[str]) -> Optional[dt.datetime]:
+    if not raw:
+        return None
+    raw = raw.strip()
+    if not raw:
+        return None
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        parsed = dt.datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed.astimezone(dt.timezone.utc)
+
+
+def _github_timestamp_from_dt(value: dt.datetime) -> str:
+    value = value.astimezone(dt.timezone.utc).replace(microsecond=0)
+    return value.isoformat().replace("+00:00", "Z")
+
+
+def _max_timestamp_from_docs(docs: List[Dict[str, Any]], fields: List[str]) -> Optional[dt.datetime]:
+    latest: Optional[dt.datetime] = None
+    for doc in docs:
+        for field in fields:
+            ts = _parse_github_timestamp(doc.get(field))
+            if ts and (latest is None or ts > latest):
+                latest = ts
+    return latest
+
+
+def _max_commit_timestamp(commits: List[Dict[str, Any]]) -> Optional[dt.datetime]:
+    latest: Optional[dt.datetime] = None
+    for commit in commits:
+        meta = commit.get("commit") or {}
+        for key in ("author", "committer"):
+            candidate = _parse_github_timestamp(((meta.get(key) or {}).get("date")))
+            if candidate and (latest is None or candidate > latest):
+                latest = candidate
+    return latest
+
+
+def _cached_blame_head_sha(doc: Dict[str, Any]) -> Optional[str]:
+    if not doc:
+        return None
+    head = doc.get("head_commit_sha")
+    if head:
+        return head
+    files = doc.get("files") or []
+    for entry in files:
+        sha = entry.get("root_commit_oid")
+        if sha:
+            return sha
+    return None
+
+
+def _get_changed_files_between_refs(owner: str, repo: str,
+                                    base_sha: Optional[str],
+                                    head_sha: Optional[str]) -> Optional[List[Dict[str, Optional[str]]]]:
+    if not base_sha or not head_sha or base_sha == head_sha:
+        return []
+    url = f"{BASE_URL}/repos/{owner}/{repo}/compare/{base_sha}...{head_sha}"
+    resp = _request("GET", url)
+    if resp.status_code != 200:
+        _log_http_error(resp, url)
+        return None
+    payload = resp.json() or {}
+    files = payload.get("files") or []
+    changed: List[Dict[str, Optional[str]]] = []
+    for entry in files:
+        changed.append({
+            "path": entry.get("filename"),
+            "status": entry.get("status"),
+            "previous": entry.get("previous_filename"),
+        })
+    return changed
+
+
 # --- data retrieval urls ---
 def get_repo_meta(owner: str, repo: str) -> Dict[str, Any]:
     """Fetch repository metadata and normalize repo_name field."""
@@ -758,9 +934,42 @@ def get_repo_meta(owner: str, repo: str) -> Dict[str, Any]:
 
 def get_issues(owner: str, repo: str) -> List[Dict[str, Any]]:
     """Return all issues (excluding pull requests) for a repository."""
-    url = f"{BASE_URL}/repos/{owner}/{repo}/issues?state=all"
+    base_url = f"{BASE_URL}/repos/{owner}/{repo}/issues?state=all"
+    cached = _load_cached_list(owner, repo, "issues.json")
+    cached_map = {
+        issue.get("number"): issue
+        for issue in cached
+        if isinstance(issue, dict) and issue.get("number") is not None
+    }
+
+    latest_ts = _max_timestamp_from_docs(cached, ["updated_at", "closed_at", "created_at"])
+    incremental = bool(cached_map and latest_ts)
+    url = base_url
+    if incremental:
+        since = latest_ts - dt.timedelta(seconds=INCREMENTAL_LOOKBACK_SEC)
+        url = f"{base_url}&since={quote_plus(_github_timestamp_from_dt(since))}"
+
     data = _paged_get(url, owner, repo)
-    return [i for i in data if "pull_request" not in i]
+    issues = [i for i in data if "pull_request" not in i]
+    if not incremental:
+        return issues
+    if not issues:
+        return cached
+
+    order = [issue.get("number") for issue in cached if issue.get("number") is not None]
+    for issue in issues:
+        num = issue.get("number")
+        if num is None:
+            continue
+        cached_map[num] = issue
+        if num in order:
+            order.remove(num)
+        order.insert(0, num)
+
+    merged = [cached_map[num] for num in order if num in cached_map]
+    missing = [num for num in cached_map.keys() if num not in order]
+    merged.extend(cached_map[num] for num in missing)
+    return merged
 
 
 def get_pull_requests(owner: str, repo: str) -> List[Dict[str, Any]]:
@@ -771,8 +980,41 @@ def get_pull_requests(owner: str, repo: str) -> List[Dict[str, Any]]:
 
 def get_commits(owner: str, repo: str) -> List[Dict[str, Any]]:
     """Return commit metadata, optionally capped by MAX_PAGES_COMMITS."""
-    url = f"{BASE_URL}/repos/{owner}/{repo}/commits"
-    return _paged_get(url, owner, repo, max_pages=MAX_PAGES_COMMITS)
+    base_url = f"{BASE_URL}/repos/{owner}/{repo}/commits"
+    cached = _load_cached_list(owner, repo, "commits.json")
+    cached_map = {
+        commit.get("sha"): commit
+        for commit in cached
+        if isinstance(commit, dict) and commit.get("sha")
+    }
+
+    latest_ts = _max_commit_timestamp(cached)
+    incremental = bool(cached_map and latest_ts)
+    url = base_url
+    if incremental:
+        since = latest_ts - dt.timedelta(seconds=INCREMENTAL_LOOKBACK_SEC)
+        url = f"{base_url}?since={quote_plus(_github_timestamp_from_dt(since))}"
+
+    commits = _paged_get(url, owner, repo, max_pages=MAX_PAGES_COMMITS)
+    if not incremental:
+        return commits
+    if not commits:
+        return cached
+
+    order = [commit.get("sha") for commit in cached if commit.get("sha")]
+    for commit in commits:
+        sha = commit.get("sha")
+        if not sha:
+            continue
+        cached_map[sha] = commit
+        if sha in order:
+            order.remove(sha)
+        order.insert(0, sha)
+
+    merged = [cached_map[sha] for sha in order if sha in cached_map]
+    missing = [sha for sha in cached_map.keys() if sha not in order]
+    merged.extend(cached_map[sha] for sha in missing)
+    return merged
 
 
 def get_issue_comments(owner: str, repo: str, issue_number: int) -> List[Dict[str, Any]]:

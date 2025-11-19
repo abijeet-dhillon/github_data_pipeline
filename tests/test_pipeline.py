@@ -195,6 +195,38 @@ def test_get_pull_requests_and_commits_and_comments(mock_pg):
     assert pipeline.get_contributors("o", "r")
 
 
+@patch("rest_pipeline._paged_get")
+def test_get_issues_incremental_uses_cache(mock_pg, tmp_path, monkeypatch):
+    repo_dir = tmp_path / "o_r"
+    repo_dir.mkdir()
+    cached_issue = {"number": 1, "updated_at": "2024-01-01T00:00:00Z", "repo_name": "o/r"}
+    (repo_dir / "issues.json").write_text(json.dumps([cached_issue]))
+    monkeypatch.setattr(pipeline, "OUTPUT_DIR", str(tmp_path))
+    mock_pg.return_value = [{"number": 2, "repo_name": "o/r"}]
+
+    issues = pipeline.get_issues("o", "r")
+
+    assert {i["number"] for i in issues} == {1, 2}
+    called_url = mock_pg.call_args[0][0]
+    assert "since=" in called_url
+
+
+@patch("rest_pipeline._paged_get")
+def test_get_commits_incremental_uses_cache(mock_pg, tmp_path, monkeypatch):
+    repo_dir = tmp_path / "o_r"
+    repo_dir.mkdir()
+    cached_commit = {"sha": "a1", "commit": {"author": {"date": "2024-01-01T00:00:00Z"}}}
+    (repo_dir / "commits.json").write_text(json.dumps([cached_commit]))
+    monkeypatch.setattr(pipeline, "OUTPUT_DIR", str(tmp_path))
+    mock_pg.return_value = [{"sha": "a2", "commit": {"author": {"date": "2024-01-02T00:00:00Z"}}}]
+
+    commits = pipeline.get_commits("o", "r")
+
+    assert [c["sha"] for c in commits] == ["a2", "a1"]
+    called_url = mock_pg.call_args[0][0]
+    assert "since=" in called_url
+
+
 @patch("rest_pipeline._request", return_value=make_resp(200, {"ok": 1}))
 def test_get_commit_detail_ok(mock_r):
     out = pipeline.get_commit_detail("o", "r", "sha")
@@ -332,6 +364,7 @@ def test_collect_repo_blame_success(mock_summary, mock_fetch, mock_list, monkeyp
     monkeypatch.setattr(pipeline, "GITHUB_TOKENS", ["tok"])
     out = pipeline.collect_repo_blame("o", "r", {"default_branch": "main"}, [{"sha": "abc"}])
     assert out["files"] and out["files"][0]["path"] == "README.md"
+    assert out["head_commit_sha"] == "abc"
     mock_fetch.assert_called_once()
     mock_summary.assert_called_once()
 
@@ -341,6 +374,39 @@ def test_collect_repo_blame_needs_token(monkeypatch):
     result = pipeline.collect_repo_blame("o", "r", {"default_branch": "main"}, [])
     assert result["files"] == []
     assert "error" in result
+
+
+def test_collect_repo_blame_uses_cache(monkeypatch, tmp_path):
+    repo_dir = tmp_path / "o_r"
+    repo_dir.mkdir()
+    cached = {
+        "repo_name": "o/r",
+        "ref": "main",
+        "generated_at": "2024-01-01T00:00:00Z",
+        "head_commit_sha": "abc",
+        "files": [{
+            "path": "README.md",
+            "ref": "main",
+            "root_commit_oid": "abc",
+            "ranges_count": 1,
+            "total_lines": 10,
+            "authors": [],
+            "examples": [],
+        }],
+    }
+    (repo_dir / "repo_blame.json").write_text(json.dumps(cached))
+    monkeypatch.setattr(pipeline, "OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setattr(pipeline, "GITHUB_TOKENS", ["tok"])
+
+    def _fail(*_args, **_kwargs):  # should not be called when cache matches
+        raise AssertionError("should not refresh blame when head matches")
+
+    monkeypatch.setattr(pipeline, "list_repo_files", _fail)
+
+    result = pipeline.collect_repo_blame("o", "r", {"default_branch": "main"}, [{"sha": "abc"}])
+
+    assert result["head_commit_sha"] == "abc"
+    assert result["files"][0]["path"] == "README.md"
 
 
 # ensure_dir + save_json
