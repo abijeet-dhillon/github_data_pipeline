@@ -42,7 +42,11 @@ The retrieval script prints progress for each repo and writes JSON artifacts to 
 
 1. Verify `local_secrets.json` is filled out (URL, credentials, API key, TLS preference, optional index prefix/batch size). `src/indexing/config.py` ingests these values automatically, and the same secrets file powers the retrieval layer.
 2. Adjust `src/indexing/config.py` only if you need different defaults for `HARDCODED_DATA_DIR` or to disable `HARDLOCK` and accept CLI overrides.
-3. Ensure Elasticsearch is running (e.g., via `./elastic-start-local` or your preferred deployment).
+3. Ensure Elasticsearch is running. If you don't already have a cluster, run:
+   ```bash
+   curl -fsSL https://elastic.co/start-local | sh
+   ```
+   This bootstraps Elasticsearch + Kibana locally via Docker; capture the credentials it prints.
 
 ## 7. Run Indexing
 
