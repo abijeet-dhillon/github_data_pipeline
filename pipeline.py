@@ -78,7 +78,6 @@ REPOS              = [
     # "istanbuljs/nyc",
     # "axios/axios",
     # "rollup/rollup",
-    "numpy/numpy",
     "flutter/flutter",
     "apache/spark",
     "reduxjs/redux",
@@ -86,6 +85,7 @@ REPOS              = [
     "grafana/grafana",
     "django/django",
     "prettier/prettier",
+    "numpy/numpy",
     "pandas-dev/pandas"
 ]
 
@@ -266,6 +266,7 @@ def run_graphql_query(query: str, variables: Dict[str, Any]) -> Dict[str, Any]:
             delay = BACKOFF_BASE_SEC * (2 ** (attempt - 1))
             print(f"[graphql retry {attempt}/{MAX_RETRIES}] {exc} -> sleep {delay:.1f}s")
             sleep_with_jitter(delay)
+            print(f"Done sleeping, resuming pipeline...")
             continue
 
         if resp.status_code == 200:
@@ -299,6 +300,7 @@ def run_graphql_query(query: str, variables: Dict[str, Any]) -> Dict[str, Any]:
                     if wrapped_on_last_rotation:
                         reason = "GraphQL rate limit persists after cycling through all tokens"
                     _sleep_on_rate_limit(reason)
+                    print(f"Done sleeping, resuming pipeline...")
                     rotated_due_to_rate_limit = False
                     wrapped_on_last_rotation = False
                     continue
@@ -321,6 +323,7 @@ def run_graphql_query(query: str, variables: Dict[str, Any]) -> Dict[str, Any]:
             wait_sec = min(wait_sec, MAX_WAIT_ON_403)
             print(f"[graphql backoff {resp.status_code}] waiting {wait_sec}s for {GRAPHQL_URL}")
             sleep_with_jitter(wait_sec)
+            print(f"Done sleeping, resuming pipeline...")
             rotated_due_to_rate_limit = False
             wrapped_on_last_rotation = False
             continue
@@ -335,6 +338,7 @@ def run_graphql_query(query: str, variables: Dict[str, Any]) -> Dict[str, Any]:
             delay = BACKOFF_BASE_SEC * (2 ** (attempt - 1))
             print(f"[graphql retry {attempt}/{MAX_RETRIES}] HTTP {resp.status_code} -> sleep {delay:.1f}s")
             sleep_with_jitter(delay)
+            print(f"Done sleeping, resuming pipeline...")
             rotated_due_to_rate_limit = False
             wrapped_on_last_rotation = False
             continue
@@ -684,6 +688,7 @@ def _request(method: str, url: str, **kwargs) -> requests.Response:
             delay = BACKOFF_BASE_SEC * (2 ** (attempt - 1))
             print(f"[retry {attempt}/{MAX_RETRIES}] {e} -> sleep {delay:.1f}s")
             sleep_with_jitter(delay)
+            print(f"Done sleeping, resuming pipeline...")
             last_exc = e
             continue
 
@@ -715,6 +720,7 @@ def _request(method: str, url: str, **kwargs) -> requests.Response:
                     if wrapped_on_last_rotation:
                         reason = "rate limit persists after cycling through all tokens"
                     _sleep_on_rate_limit(reason)
+                    print(f"Done sleeping, resuming pipeline...")
                     rotated_due_to_rate_limit = False
                     wrapped_on_last_rotation = False
                     continue
@@ -738,6 +744,7 @@ def _request(method: str, url: str, **kwargs) -> requests.Response:
             wait_sec = min(wait_sec, MAX_WAIT_ON_403)
             print(f"[backoff {resp.status_code}] waiting {wait_sec}s for {url}")
             sleep_with_jitter(wait_sec)
+            print(f"Done sleeping, resuming pipeline...")
             rotated_due_to_rate_limit = False
             wrapped_on_last_rotation = False
             continue
@@ -752,6 +759,7 @@ def _request(method: str, url: str, **kwargs) -> requests.Response:
             delay = BACKOFF_BASE_SEC * (2 ** (attempt - 1))
             print(f"[retry {attempt}/{MAX_RETRIES}] HTTP {resp.status_code} -> sleep {delay:.1f}s")
             sleep_with_jitter(delay)
+            print(f"Done sleeping, resuming pipeline...")
             rotated_due_to_rate_limit = False
             wrapped_on_last_rotation = False
             continue
@@ -1048,12 +1056,19 @@ def enrich_commits_with_files(owner: str, repo: str, commits: List[Dict[str, Any
     """Populate each commit with files_changed / files_changed_count / stats."""
     for commit in commits:
         sha = commit.get("sha")
-        detail = get_commit_detail(owner, repo, sha) if sha else {}
+        existing_files = commit.get("files_changed")
+        if existing_files is not None or not sha:
+            filenames = existing_files if isinstance(existing_files, list) else []
+            commit["files_changed"] = filenames or []
+            commit["files_changed_count"] = len(filenames or [])
+            continue
+
+        detail = get_commit_detail(owner, repo, sha)
         files = (detail or {}).get("files") or []
         filenames = [f.get("filename") for f in files if f.get("filename")]
         commit["files_changed"] = filenames
         commit["files_changed_count"] = len(filenames)
-        if detail and detail.get("stats") and "stats" not in commit:
+        if detail and detail.get("stats"):
             commit["stats"] = detail["stats"]
     return commits
 
