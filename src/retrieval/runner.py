@@ -16,7 +16,7 @@ from .collectors import (
     get_repo_meta,
     save_json,
 )
-from .config import OUTPUT_DIR, REPOS
+from .config import MAX_PRS_WITH_LINKED_ISSUES, OUTPUT_DIR, REPOS
 from .linkers import (
     find_cross_project_links_issues_and_prs,
     find_issues_closed_by_repo_commits,
@@ -52,12 +52,14 @@ def process_repo(full_name: str) -> None:
     commits = get_commits(owner, repo)
     save_json(f"{out_dir}/commits.json", commits)
 
-    print("  fetching git blame snapshots...")
-    repo_blame = collect_repo_blame(owner, repo, repo_meta, commits)
-    save_json(f"{out_dir}/repo_blame.json", repo_blame)
-
     print("  fetching prs with issue references...")
-    pr_links = find_prs_with_linked_issues(owner, repo, prs, issues)
+    pr_links = find_prs_with_linked_issues(
+        owner,
+        repo,
+        prs,
+        issues,
+        max_prs=MAX_PRS_WITH_LINKED_ISSUES,
+    )
     save_json(f"{out_dir}/prs_with_linked_issues.json", pr_links)
 
     print("  fetching issues closed by repo commits...")
@@ -67,6 +69,10 @@ def process_repo(full_name: str) -> None:
     print("  fetching cross-repo references (issues & PRs)...")
     cross_links = find_cross_project_links_issues_and_prs(owner, repo, issues, prs)
     save_json(f"{out_dir}/cross_repo_links.json", cross_links)
+
+    print("  fetching git blame snapshots...")
+    repo_blame = collect_repo_blame(owner, repo, repo_meta, commits)
+    save_json(f"{out_dir}/repo_blame.json", repo_blame)
 
     print(f"    DONE EXTRACTING DATA → {out_dir}")
 

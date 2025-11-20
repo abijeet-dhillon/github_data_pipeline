@@ -17,14 +17,16 @@ REQUEST_TIMEOUT = 90
 MAX_RETRIES = max(6, len(GITHUB_TOKENS) * 2)
 BACKOFF_BASE_SEC = 2
 OUTPUT_DIR = "./output"
-MAX_PAGES_COMMITS = int(os.getenv("MAX_PAGES_COMMITS", "0"))  # 0 = no cap
+MAX_PAGES_COMMITS = int(os.getenv("MAX_PAGES_COMMITS", "3"))  # 0 = no cap
 MAX_WAIT_ON_403 = int(os.getenv("MAX_WAIT_ON_403", "180"))
 RATE_LIMIT_TOKEN_RESET_WAIT_SEC = int(
     os.getenv("RATE_LIMIT_TOKEN_RESET_WAIT_SEC", str(60 * 60))
 )
 INCREMENTAL_LOOKBACK_SEC = int(os.getenv("INCREMENTAL_LOOKBACK_SEC", "300"))
 BLAME_EXAMPLE_LIMIT = int(os.getenv("BLAME_EXAMPLE_LIMIT", "5"))
-BLAME_FILE_LIMIT = int(os.getenv("BLAME_FILE_LIMIT", "0"))
+BLAME_FILE_LIMIT = int(os.getenv("BLAME_FILE_LIMIT", "50"))
+MAX_PRS_WITH_LINKED_ISSUES = int(os.getenv("MAX_PRS_WITH_LINKED_ISSUES", "100"))  # 0 = no cap
+MAX_PAGES_PRS = int(os.getenv("MAX_PAGES_PRS", "3"))  # 0 = no cap
 
 REPOS = [
     # "micromatch/micromatch",
@@ -32,10 +34,10 @@ REPOS = [
     # "standard/standard",
     # "istanbuljs/nyc",
     # "axios/axios",
+    # "reduxjs/redux",
     # "rollup/rollup",
     "flutter/flutter",
     "apache/spark",
-    "reduxjs/redux",
     "torvalds/linux",
     "grafana/grafana",
     "django/django",
@@ -60,5 +62,7 @@ __all__ = [
     "INCREMENTAL_LOOKBACK_SEC",
     "BLAME_EXAMPLE_LIMIT",
     "BLAME_FILE_LIMIT",
+    "MAX_PRS_WITH_LINKED_ISSUES",
+    "MAX_PAGES_PRS",
     "REPOS",
 ]

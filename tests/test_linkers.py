@@ -37,6 +37,38 @@ def test_find_prs_with_linked_issues(mock_pr_commits, mock_commit_detail, mock_i
 
 
 @patch("src.retrieval.linkers.get_issue_or_pr_details", return_value={"user": {"login": "issue-author"}})
+@patch("src.retrieval.linkers.get_commit_detail", return_value={"commit": {"message": ""}})
+@patch("src.retrieval.linkers.get_pr_commits", return_value=[])
+def test_find_prs_with_linked_issues_respects_max(mock_pr_commits, mock_commit_detail, mock_issue):
+    prs = [
+        {
+            "number": 1,
+            "title": "Fix #1",
+            "body": "",
+            "created_at": "2024-01-01T00:00:00Z",
+            "user": {"login": "dev1"},
+            "merged": False,
+            "state": "open",
+            "html_url": "url-1",
+        },
+        {
+            "number": 2,
+            "title": "Fix #2",
+            "body": "",
+            "created_at": "2024-02-01T00:00:00Z",
+            "user": {"login": "dev2"},
+            "merged": False,
+            "state": "open",
+            "html_url": "url-2",
+        },
+    ]
+    results = linkers.find_prs_with_linked_issues("owner", "repo", prs, [], max_prs=1)
+    assert len(results) == 1
+    assert results[0]["pr_number"] == 2  # newest PR is scanned first
+    assert mock_pr_commits.call_count == 1
+
+
+@patch("src.retrieval.linkers.get_issue_or_pr_details", return_value={"user": {"login": "issue-author"}})
 def test_find_issues_closed_by_repo_commits(mock_issue):
     commits = [{
         "sha": "abc",

@@ -7,9 +7,13 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Iterable
 
+try:
+    import ijson  # type: ignore
+except ImportError:  # pragma: no cover
+    ijson = None
+
 from .client import ESClient
 from .schema import FILE_TO_INDEX, MAPPINGS
-
 
 def folder_repo_name(repo_dir: Path) -> str:
     """Convert an owner_repo folder name to owner/repo for indexing."""
@@ -31,7 +35,21 @@ def ensure_repo_name_field(doc: Dict[str, Any], repo_name: str) -> None:
 def iter_json(path: Path) -> Iterable[Any]:
     """Yield JSON items from files that may contain a list or a single object."""
 
-    with path.open("r", encoding="utf-8") as handle:
+    with path.open("rb") as handle:
+        first_char = None
+        while True:
+            ch = handle.read(1)
+            if not ch:
+                break
+            decoded = ch.decode("utf-8")
+            if not decoded.isspace():
+                first_char = decoded
+                break
+        handle.seek(0)
+        if first_char == "[" and ijson is not None:
+            for item in ijson.items(handle, "item"):
+                yield item
+            return
         data = json.load(handle)
     if isinstance(data, list):
         yield from data

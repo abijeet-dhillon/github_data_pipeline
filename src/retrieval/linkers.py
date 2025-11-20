@@ -50,18 +50,29 @@ def extract_issue_refs_detailed(text: str) -> List[Dict[str, Any]]:
 
 def find_prs_with_linked_issues(owner: str, repo: str,
                                 prs: List[Dict[str, Any]],
-                                local_issues: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
+                                local_issues: Optional[List[Dict[str, Any]]] = None,
+                                max_prs: int = 0) -> List[Dict[str, Any]]:
     """Discover PRs referencing issues via titles, bodies, commits, or merge messages."""
     results: List[Dict[str, Any]] = []
     issue_author_cache: Dict[Tuple[str, int], Optional[str]] = {}
     pr_commits_cache: Dict[int, List[Dict[str, Any]]] = {}
+    pr_candidates = prs or []
+    total_prs = len(pr_candidates)
+
+    if max_prs and len(pr_candidates) > max_prs:
+        pr_candidates = sorted(
+            pr_candidates,
+            key=lambda pr: (pr.get("created_at") or pr.get("updated_at") or ""),
+            reverse=True,
+        )[:max_prs]
+        print(f"  limiting PR linkage scan to {len(pr_candidates)} of {total_prs} PRs (MAX_PRS_WITH_LINKED_ISSUES={max_prs})")
 
     if local_issues:
         for issue in local_issues:
             issue_author_cache[(f"{owner}/{repo}".lower(), issue["number"])] = ((issue.get("user") or {}).get("login"))
 
     all_refs: Dict[int, Dict[str, Any]] = {}
-    for pr in prs:
+    for pr in pr_candidates:
         pr_number = pr.get("number")
         title, body = pr.get("title") or "", pr.get("body") or ""
         merged = bool(pr.get("merged_at")) if "merged_at" in pr else bool(pr.get("merged", False))

@@ -28,7 +28,7 @@ pip install -r requirements.txt
 ## 4. Configure the Retrieval Workflow
 
 1. Edit `src/retrieval/config.py` when you need to change `REPOS` or tweak environment-based overrides (pagination, blame sampling, etc.).
-2. Optional environment overrides exist for commit pagination and lookback windows.
+2. Optional environment overrides exist in `src/retrieval/config.py` (`MAX_PAGES_COMMITS`, `MAX_PAGES_PRS`, `BLAME_FILE_LIMIT`, `MAX_PRS_WITH_LINKED_ISSUES`, etc.); `0` means no cap.
 
 ## 5. Run Retrieval
 

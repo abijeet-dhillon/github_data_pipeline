@@ -15,6 +15,7 @@ from .config import (
     BLAME_FILE_LIMIT,
     GITHUB_TOKENS,
     INCREMENTAL_LOOKBACK_SEC,
+    MAX_PAGES_PRS,
     MAX_PAGES_COMMITS,
     OUTPUT_DIR,
 )
@@ -608,7 +609,7 @@ def get_issues(owner: str, repo: str) -> List[Dict[str, Any]]:
 def get_pull_requests(owner: str, repo: str) -> List[Dict[str, Any]]:
     """Return all pull requests for a repository."""
     url = f"{BASE_URL}/repos/{owner}/{repo}/pulls?state=all"
-    return paged_get(url, owner, repo)
+    return paged_get(url, owner, repo, max_pages=MAX_PAGES_PRS)
 
 
 def get_commits(owner: str, repo: str) -> List[Dict[str, Any]]:
