@@ -32,6 +32,9 @@ def ensure_dir(path: str) -> None:
 
 def save_json(path: str, data: Any) -> None:
     """Write JSON to disk using UTF-8 and deterministic formatting."""
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
