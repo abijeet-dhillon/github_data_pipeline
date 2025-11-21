@@ -36,13 +36,13 @@ REPOS = [
     # "axios/axios",
     # "reduxjs/redux",
     # "rollup/rollup",
-    "flutter/flutter",
-    "apache/spark",
+    # "apache/spark",
     "torvalds/linux",
     "grafana/grafana",
     "django/django",
     "prettier/prettier",
     "numpy/numpy",
+    "flutter/flutter",
     "pandas-dev/pandas"   
 ]
 

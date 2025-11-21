@@ -52,10 +52,10 @@ pip install -r requirements.txt
 python3 src/pipeline/runner.py
 
 # (Optional) Run retrieval only (edit src/retrieval/config.py for repo list)
-python3 src/retrieval/runner.py
+python3 run_retrieval.py
 
 # (Optional) Run indexing only (configure src/indexing/config.py)
-python3 src/indexing/runner.py
+python3 run_indexing.py
 ```
 
 ## Secrets Configuration

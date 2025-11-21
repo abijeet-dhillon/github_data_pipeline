@@ -33,7 +33,8 @@ pip install -r requirements.txt
 ## 5. Run Retrieval
 
 ```bash
-python3 src/retrieval/runner.py
+python3 run_retrieval.py              # convenience shim
+# or: python3 src/retrieval/runner.py
 ```
 
 The retrieval script prints progress for each repo and writes JSON artifacts to `output/{owner_repo}`. See [docs/pipeline_outputs.md](pipeline_outputs.md) for details on every file.
@@ -51,7 +52,8 @@ The retrieval script prints progress for each repo and writes JSON artifacts to 
 ## 7. Run Indexing
 
 ```bash
-python3 src/indexing/runner.py
+python3 run_indexing.py               # convenience shim
+# or: python3 -m src.indexing.runner
 ```
 
 The runner ensures indices exist (using mappings from `src/indexing/schema.py`) and streams each JSON file under `output/` into Elasticsearch via `ESClient.bulk_index`.

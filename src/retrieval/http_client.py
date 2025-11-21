@@ -151,10 +151,19 @@ def run_graphql_query(query: str, variables: Dict[str, Any]) -> Dict[str, Any]:
             retry_after = headers_resp.get("Retry-After")
             is_rate_limited = (remaining == "0") or (reset and str(reset).isdigit())
             if is_rate_limited:
-                if rotated_due_to_rate_limit:
-                    reason = "GraphQL rate limit persists after cycling tokens"
-                    if wrapped_on_last_rotation:
-                        reason = "GraphQL rate limit persists after cycling through all tokens"
+                token_count = len(GITHUB_TOKENS)
+                reached_end_of_rotation = rotated_due_to_rate_limit and (
+                    wrapped_on_last_rotation or (token_count > 0 and GITHUB_TOKEN_INDEX == (token_count - 1))
+                )
+                if token_count <= 1:
+                    reason = "GraphQL rate limit persists with a single token"
+                    sleep_on_rate_limit(reason)
+                    print("  done sleeping, resuming retrieval run...")
+                    rotated_due_to_rate_limit = False
+                    wrapped_on_last_rotation = False
+                    continue
+                if reached_end_of_rotation:
+                    reason = "GraphQL rate limit persists after cycling through all tokens"
                     sleep_on_rate_limit(reason)
                     print("  done sleeping, resuming retrieval run...")
                     rotated_due_to_rate_limit = False
@@ -163,7 +172,6 @@ def run_graphql_query(query: str, variables: Dict[str, Any]) -> Dict[str, Any]:
 
                 prev_index = GITHUB_TOKEN_INDEX
                 if switch_to_next_token():
-                    token_count = len(GITHUB_TOKENS)
                     wrapped_on_last_rotation = token_count > 0 and prev_index == (token_count - 1)
                     rotated_due_to_rate_limit = True
                     continue
@@ -253,10 +261,19 @@ def request_with_backoff(method: str, url: str, **kwargs) -> requests.Response:
             has_retry_after = retry_after and str(retry_after).isdigit()
 
             if is_rate_limited:
-                if rotated_due_to_rate_limit:
-                    reason = "rate limit persists after cycling tokens"
-                    if wrapped_on_last_rotation:
-                        reason = "rate limit persists after cycling through all tokens"
+                token_count = len(GITHUB_TOKENS)
+                reached_end_of_rotation = rotated_due_to_rate_limit and (
+                    wrapped_on_last_rotation or (token_count > 0 and GITHUB_TOKEN_INDEX == (token_count - 1))
+                )
+                if token_count <= 1:
+                    reason = "rate limit persists with a single token"
+                    sleep_on_rate_limit(reason)
+                    print("  done sleeping, resuming retrieval run...")
+                    rotated_due_to_rate_limit = False
+                    wrapped_on_last_rotation = False
+                    continue
+                if reached_end_of_rotation:
+                    reason = "rate limit persists after cycling through all tokens"
                     sleep_on_rate_limit(reason)
                     print("  done sleeping, resuming retrieval run...")
                     rotated_due_to_rate_limit = False
@@ -265,7 +282,6 @@ def request_with_backoff(method: str, url: str, **kwargs) -> requests.Response:
 
                 prev_index = GITHUB_TOKEN_INDEX
                 if switch_to_next_token():
-                    token_count = len(GITHUB_TOKENS)
                     wrapped_on_last_rotation = token_count > 0 and prev_index == (token_count - 1)
                     rotated_due_to_rate_limit = True
                     continue

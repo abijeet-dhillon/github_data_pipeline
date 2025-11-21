@@ -291,6 +291,11 @@ MAPPINGS: Dict[str, Dict[str, Any]] = {
                 },
             },
         },
+        "settings": {
+            **COMMON_SETTINGS["settings"],
+            # Large blame documents can exceed ES nested limits; raise safely.
+            "index.mapping.nested_objects.limit": 150000,
+        },
     },
 }
 
