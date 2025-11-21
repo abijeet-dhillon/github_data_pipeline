@@ -46,6 +46,23 @@ def sleep_on_rate_limit(reason: str) -> None:
     time.sleep(wait_sec)
 
 
+def _rate_limit_hint(headers_resp: Dict[str, Any]) -> Optional[str]:
+    """Return a human-readable hint for how long until reset if available."""
+    retry_after = headers_resp.get("Retry-After")
+    reset = headers_resp.get("X-RateLimit-Reset")
+    hints = []
+    if retry_after and str(retry_after).isdigit():
+        hints.append(f"retry_after={int(retry_after)}s")
+    if reset and str(reset).isdigit():
+        reset_ts = int(reset)
+        sec_until = max(0, reset_ts - int(time.time()))
+        reset_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(reset_ts))
+        hints.append(f"reset_in={sec_until}s (at {reset_iso})")
+    if hints:
+        return ", ".join(hints)
+    return None
+
+
 def log_http_error(resp: requests.Response, url: str) -> None:
     """Print a short, human-readable message when GitHub returns an error."""
     try:
@@ -157,6 +174,9 @@ def run_graphql_query(query: str, variables: Dict[str, Any]) -> Dict[str, Any]:
                 )
                 if token_count <= 1:
                     reason = "GraphQL rate limit persists with a single token"
+                    hint = _rate_limit_hint(headers_resp)
+                    if hint:
+                        print(f"    rate limit hint: {hint}")
                     sleep_on_rate_limit(reason)
                     print("  done sleeping, resuming retrieval run...")
                     rotated_due_to_rate_limit = False
@@ -164,6 +184,9 @@ def run_graphql_query(query: str, variables: Dict[str, Any]) -> Dict[str, Any]:
                     continue
                 if reached_end_of_rotation:
                     reason = "GraphQL rate limit persists after cycling through all tokens"
+                    hint = _rate_limit_hint(headers_resp)
+                    if hint:
+                        print(f"    rate limit hint: {hint}")
                     sleep_on_rate_limit(reason)
                     print("  done sleeping, resuming retrieval run...")
                     rotated_due_to_rate_limit = False
@@ -267,6 +290,9 @@ def request_with_backoff(method: str, url: str, **kwargs) -> requests.Response:
                 )
                 if token_count <= 1:
                     reason = "rate limit persists with a single token"
+                    hint = _rate_limit_hint(headers_resp)
+                    if hint:
+                        print(f"    rate limit hint: {hint}")
                     sleep_on_rate_limit(reason)
                     print("  done sleeping, resuming retrieval run...")
                     rotated_due_to_rate_limit = False
@@ -274,6 +300,9 @@ def request_with_backoff(method: str, url: str, **kwargs) -> requests.Response:
                     continue
                 if reached_end_of_rotation:
                     reason = "rate limit persists after cycling through all tokens"
+                    hint = _rate_limit_hint(headers_resp)
+                    if hint:
+                        print(f"    rate limit hint: {hint}")
                     sleep_on_rate_limit(reason)
                     print("  done sleeping, resuming retrieval run...")
                     rotated_due_to_rate_limit = False
