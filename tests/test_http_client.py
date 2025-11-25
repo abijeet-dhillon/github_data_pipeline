@@ -112,15 +112,13 @@ def test_request_retry_after_wait(mock_session):
 
 
 @patch("src.retrieval.http_client.request_with_backoff")
-def test_paged_get_accumulates_pages(mock_request, monkeypatch):
+def test_paged_get_sets_repo_name_and_stops_without_link(mock_request, monkeypatch):
     monkeypatch.setattr(config, "PER_PAGE", 2)
     monkeypatch.setattr(http_client, "PER_PAGE", 2)
-    mock_request.side_effect = [
-        _make_resp(200, [{"id": 1}, {"id": 2}]),
-        _make_resp(200, [{"id": 3}]),
-    ]
+    mock_request.side_effect = [_make_resp(200, [{"id": 1}, {"id": 2}])]
     results = http_client.paged_get("url", "o", "r")
-    assert [entry["id"] for entry in results] == [1, 2, 3]
+    assert [entry["repo_name"] for entry in results] == ["o/r", "o/r"]
+    assert mock_request.call_count == 1
 
 
 @patch("src.retrieval.http_client.requests.post")
@@ -172,3 +170,22 @@ def test_request_terminal_error_returns_resp(mock_session, mock_log):
     result = http_client.request_with_backoff("GET", "url")
     assert result is resp
     mock_log.assert_called_once()
+
+
+@patch("src.retrieval.http_client.request_with_backoff")
+def test_paged_get_accumulates_pages_via_link_header(mock_request, monkeypatch):
+    monkeypatch.setattr(config, "PER_PAGE", 2)
+    monkeypatch.setattr(http_client, "PER_PAGE", 2)
+    mock_request.side_effect = [
+        _make_resp(
+            200,
+            [{"id": 1}, {"id": 2}],
+            headers={"Link": '<https://api.github.com/x?per_page=2&after=c1>; rel="next"'},
+        ),
+        _make_resp(200, [{"id": 3}], headers={}),
+    ]
+    results = http_client.paged_get("https://api.github.com/x", "o", "r")
+    assert [entry["id"] for entry in results] == [1, 2, 3]
+    called_urls = [call.args[1] for call in mock_request.call_args_list]
+    assert called_urls[0] == "https://api.github.com/x?per_page=2"
+    assert called_urls[1] == "https://api.github.com/x?per_page=2&after=c1"

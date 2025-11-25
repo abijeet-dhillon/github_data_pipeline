@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import time
 from typing import Any, Dict, List, Optional
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import requests
 
@@ -354,22 +355,49 @@ def request_with_backoff(method: str, url: str, **kwargs) -> requests.Response:
     raise RuntimeError("Request failed after retries.")
 
 
+def _normalize_pagination_url(url: str) -> str:
+    """Ensure per_page is present without altering server-provided cursor params."""
+    parsed = urlparse(url)
+    params = parse_qsl(parsed.query, keep_blank_values=True)
+    has_per_page = any(k == "per_page" for k, _ in params)
+    if not has_per_page:
+        params.append(("per_page", str(PER_PAGE)))
+    new_query = urlencode(params, doseq=True)
+    return urlunparse(parsed._replace(query=new_query))
+
+
+def _next_link_from_header(link_header: Optional[str]) -> Optional[str]:
+    """Extract the rel=\"next\" URL from a GitHub Link header, if present."""
+    if not link_header:
+        return None
+    for part in link_header.split(","):
+        section = part.strip()
+        if 'rel="next"' not in section:
+            continue
+        start = section.find("<")
+        end = section.find(">", start + 1)
+        if start != -1 and end != -1:
+            return section[start + 1:end]
+    return None
+
+
 def paged_get(url: str, owner: str, repo: str, *, max_pages: int = 0) -> List[Dict[str, Any]]:
-    """Automatically retrieve pages until the API returns empty results or max_pages hits."""
+    """Retrieve paginated REST resources following Link headers (cursor or page)."""
     results: List[Dict[str, Any]] = []
-    page = 1
-    while True:
-        if max_pages and page > max_pages:
+    next_url: Optional[str] = _normalize_pagination_url(url)
+    page = 0
+
+    while next_url:
+        if max_pages and page >= max_pages:
             break
-        sep = "&" if "?" in url else "?"
-        page_url = f"{url}{sep}per_page={PER_PAGE}&page={page}"
-        resp = request_with_backoff("GET", page_url)
+
+        resp = request_with_backoff("GET", next_url)
         if resp.status_code != 200:
             try:
                 err = resp.json().get("message")
             except Exception:
                 err = (resp.text or "")[:200]
-            print(f"[warn] {page_url} → {resp.status_code} :: {err}")
+            print(f"[warn] {next_url} → {resp.status_code} :: {err}")
             break
 
         batch = resp.json()
@@ -380,10 +408,10 @@ def paged_get(url: str, owner: str, repo: str, *, max_pages: int = 0) -> List[Di
             entry["repo_name"] = f"{owner}/{repo}"
         results.extend(batch)
 
-        if len(batch) < PER_PAGE:
-            break
-
         page += 1
+        next_link = _next_link_from_header(resp.headers.get("Link"))
+        next_url = _normalize_pagination_url(next_link) if next_link else None
+
     return results
 
 
