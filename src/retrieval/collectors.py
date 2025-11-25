@@ -189,7 +189,7 @@ def summarize_blame_ranges(blame_ranges: List[Dict[str, Any]],
         }
         ranges_by_author[author].append(range_entry)
 
-        if len(examples) < BLAME_EXAMPLE_LIMIT:
+        if BLAME_EXAMPLE_LIMIT <= 0 or len(examples) < BLAME_EXAMPLE_LIMIT:
             examples.append({
                 "lines": {"start": start, "end": end, "count": count},
                 "commit_sha": commit_sha,
