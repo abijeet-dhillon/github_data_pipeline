@@ -90,7 +90,7 @@ pytest tests/test_es_client.py tests/test_index_schema.py tests/test_indexer.py 
 ### Full Suite
 
 ```bash
-pytest tests            # quick regression check
+pytest tests
 pytest tests --cov=src.retrieval --cov=src.indexing --cov-report=term-missing
 ```
 

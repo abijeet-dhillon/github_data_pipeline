@@ -14,6 +14,53 @@ In this report the student should write their progress update. Please organize y
 - [Week 8](#cosc-448---tasks-week-8)
 - [Week 9](#cosc-448---tasks-week-9)
 - [Week 10](#cosc-448---tasks-week-10)
+- [Week 13](#cosc-448---tasks-week-13)
+- [Week 14](#cosc-448---tasks-week-14)
+
+---
+
+# COSC 448 - Tasks (Week 14)
+
+## Action Items
+
+- [ ] Deploy the pipeline to the lab workstation and verify that it runs reliably in the target environment.
+- [ ] Create three well-scoped, complex user stories that capture cross-repo workflows, issue–PR relationships, and meaningful research-driven insights to establish the system’s functional boundaries and capabilities.
+
+# COSC 448 - Summary (Week 14)
+
+---
+
+# COSC 448 - Tasks (Week 13)
+
+## Action Items
+
+- [x] Prepare & give presentation (include use cases focused on ElasticSearch queries - e.g., contributor metrics, PR–issue linkage, commit churn, reviewer activity).
+- [x] Fix HTTP 422 error recieved when running retrieval for large repositories.
+- [x] Inquire about user stories and queries to support them.
+- [x] Upload full codebase into the STASER-Hub course repository.
+
+# COSC 448 - Summary (Week 13)
+
+**[GitHub Data Pipeline Repository](https://github.com/abijeet-dhillon/github_data_pipeline/tree/main)**
+
+### 1. **Presentation**
+
+- Built the final presentation storyline around contributor metrics, PR–issue linkage, churn, and reviewer activity.
+- Created final slides (see `docs/final_presentation_abijeetdhillon.pdf` in this repository) that highlight Elasticsearch queries (saved searches plus Kibana dashboards) and rehearsed the flow to stay inside the allotted time while showcasing the GitHub pipeline’s value.
+
+### 2. **HTTP 422 mitigation for large repositories**
+
+- Root cause was our pagination helper mutating GitHub’s `Link` header URLs—those rewritten cursors triggered 422s on huge repos. Added `_normalize_pagination_url()` plus the `per_page` guard in `http_client.py` to preserve server-provided query params while still requesting max payloads.
+- Marked 422 as a terminal error inside `request_with_backoff()` so the caller surfaces a helpful message instead of spiraling through retries. Verified by re-running the pipeline on `kubernetes/kubernetes` and `microsoft/vscode` and seeing clean, uninterrupted artifact generation.
+
+### 3. **Inquiry into user stories & supporting queries**
+
+- We clarified how User Stores should capture cross-repository workflows, issue–pull request relationships, and meaningful research-oriented insights while staying grounded in what the system can realistically support. We also aligned on developing three well-scoped, complex user stories to define the system’s limits, capabilities, and the depth of analysis we can reliably achieve.
+
+### 4. **Repository Upload**
+
+- Uploaded the full GitHub data pipeline codebase into this STASER-Hub course repository so all work is visible for marking and review.
+- Day-to-day development happens in the private **[GitHub Data Pipeline Repository](https://github.com/abijeet-dhillon/github_data_pipeline/tree/main)**, where I commit and push more frequently; periodically I batch-upload changes into STASER-Hub, so some commits here may look aggregated or have higher-level messages as a result.
 
 ---
 
@@ -28,8 +75,6 @@ In this report the student should write their progress update. Please organize y
 - [x] Explore and test the endpoint GET /repos/:owner/:repo/commits/:sha to confirm enrichment fields for diffs, stats, and file metadata.
 - [x] Begin validating schema consistency to ensure all pulled data matches expected fields across the pipeline.
 - [ ] Prepare presentation (include use cases focused on ElasticSearch queries - e.g., contributor metrics, PR–issue linkage, commit churn, reviewer activity).
-
----
 
 # COSC 448 - Summary (Week 10)
 

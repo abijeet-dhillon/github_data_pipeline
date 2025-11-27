@@ -19,7 +19,11 @@ ISSUE_REF_RE = re.compile(
     r"(?:(?P<full>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(?P<num1>\d+)|#(?P<num2>\d+))",
     flags=re.IGNORECASE,
 )
-CROSS_REPO_RE = re.compile(r"([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(\d+)", re.IGNORECASE)
+CROSS_REPO_RE = re.compile(
+    r"(?:(?:https?://github\.com/)?(?P<full>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)"
+    r"(?:(?:/(?P<kind>issues|pull))/(?P<num1>\d+)|#(?P<num2>\d+)))",
+    re.IGNORECASE,
+)
 
 
 def extract_issue_refs_detailed(text: str) -> List[Dict[str, Any]]:
@@ -268,8 +272,8 @@ def find_cross_project_links_issues_and_prs(owner: str, repo: str,
                 continue
 
             for match in CROSS_REPO_RE.finditer(text):
-                target_full = match.group(1)
-                target_num = int(match.group(2))
+                target_full = match.group("full")
+                target_num = int(match.group("num1") or match.group("num2"))
                 if target_full.lower() == this_repo_full:
                     continue
 

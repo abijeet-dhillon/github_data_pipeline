@@ -14,7 +14,8 @@ This report summarizes observed performance characteristics, opportunities for o
 
 - **Large `repo_blame` uploads (HTTP 413):** Elasticsearch rejects oversized `_bulk` payloads when many blame documents are sent together (observed on `rollup/rollup`). Mitigate by lowering `HARDCODED_BATCH_SIZE` or raising `http.max_content_length` server-side.
 - **GitHub token exhaustion:** When every Personal Access Token is rate limited, the retrieval layer sleeps for `RATE_LIMIT_TOKEN_RESET_WAIT_SEC`. Operators should provide multiple fresh tokens to avoid hour-long idle periods.
-- **REST pagination limits:** For extremely large repositories (e.g., `flutter/flutter`), the classic `?page=` parameter can return HTTP 422 with “Pagination with the page parameter is not supported...” errors. GitHub recommends cursor-based pagination (“after”/“before”) for those datasets; future work should explore adopting that approach.
+- **Missing merge commits during PR linkage (HTTP 422):** When scanning PRs for issue-closing keywords in merge messages, some repositories return “No commit found for SHA” for the reported `merge_commit_sha`. This happens when PRs were squashed/rebased or the merge object was later GC’d on GitHub’s side. We log the 422 and skip the merge-message scan; downstream data still populates, but linkage from that specific merge commit cannot be derived.
+- **Cross-repo parsing sometimes yields 404s:** Some references resolve to GitHub URLs that return 404 (e.g., file anchors formatted like issues, deleted repos/issues, or stale links). GitHub answers “Not Found” for those resources; we log the warning and keep the source entry with a null target. No clean suppression exists yet without risking missed legitimate cross-repo links.
 
 ## Performance Analysis
 

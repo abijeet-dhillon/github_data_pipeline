@@ -18,21 +18,6 @@ The codebase is divided into two cooperative phases:
 
 Each phase is independently testable, yet they share conventions such as the `repo_name` join key and deterministic hashing helpers.
 
-## Repository Layout
-
-```
-├── docs/                     # Supplementary documentation (setup workflows, outputs, analytics, weekly reports)
-├── output/                   # Generated JSON artifacts per repository (git-ignored)
-├── run_pipeline.py           # Legacy wrapper (delegates to full pipeline)
-├── src/
-│   ├── pipeline/             # Orchestrator that runs retrieval then indexing
-│   ├── retrieval/            # Data collection, GitHub helpers, orchestration
-│   └── indexing/             # Elasticsearch config, schemas, client, orchestration
-├── tests/                    # Unit tests for retrieval and indexing modules
-├── requirements.txt          # Python dependencies
-└── README.md                 # You are here
-```
-
 Refer to:
 
 - [docs/pipeline_setup.md](docs/pipeline_setup.md) for running the full retrieval → indexing pipeline.
@@ -49,7 +34,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 
 # Run the full pipeline (retrieval followed by indexing)
-python3 src/pipeline/runner.py
+python3 run_pipeline.py
 
 # (Optional) Run retrieval only (edit src/retrieval/config.py for repo list)
 python3 run_retrieval.py

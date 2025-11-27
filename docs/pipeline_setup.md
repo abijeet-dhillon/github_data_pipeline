@@ -11,7 +11,7 @@ Use this guide when you want to execute the entire workflow end-to-end: first th
 ## 2. Install Dependencies
 ```bash
 python3 -m venv .venv
-source .venv/bin/activate
+source venv/bin/activate
 pip install -r requirements.txt
 ```
 
