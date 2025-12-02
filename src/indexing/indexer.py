@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from typing import Any, Dict, Iterable
+from typing import Any, Dict, Iterable, Optional
 
 try:
     import ijson  # type: ignore
@@ -14,6 +14,10 @@ except ImportError:  # pragma: no cover
 
 from .client import ESClient
 from .schema import FILE_TO_INDEX, MAPPINGS
+
+# repo_blame payloads can be extremely large. Keep bulk requests small to avoid 413s.
+REPO_BLAME_BATCH_SIZE = 50
+
 
 def folder_repo_name(repo_dir: Path) -> str:
     """Convert an owner_repo folder name to owner/repo for indexing."""
@@ -57,6 +61,55 @@ def iter_json(path: Path) -> Iterable[Any]:
         yield data
     else:
         yield {"raw": data}
+
+
+def _extract_repo_blame_metadata(path: Path, repo_name: str) -> Dict[str, Any]:
+    """Return top-level metadata without loading the full blame payload."""
+
+    meta_keys = {"repo_name", "ref", "generated_at", "head_commit_sha", "error"}
+    meta: Dict[str, Any] = {"repo_name": repo_name}
+
+    if ijson is None:
+        with path.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        for key in meta_keys:
+            if key in data:
+                meta[key] = data[key]
+        return meta
+
+    with path.open("rb") as handle:
+        for prefix, event, value in ijson.parse(handle):
+            if prefix in meta_keys and event in {"string", "number", "boolean", "null"}:
+                meta[prefix] = value
+    return meta
+
+
+def iter_repo_blame_docs(path: Path, repo_name: str) -> Iterable[Dict[str, Any]]:
+    """Stream repo_blame entries one file at a time to keep bulk payloads small."""
+
+    meta = _extract_repo_blame_metadata(path, repo_name)
+
+    def _build_doc(file_entry: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        doc = dict(meta)
+        doc["files"] = [file_entry] if file_entry is not None else []
+        ensure_repo_name_field(doc, repo_name)
+        return doc
+
+    count = 0
+    if ijson is None:
+        with path.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        for file_entry in data.get("files") or []:
+            yield _build_doc(file_entry)
+            count += 1
+    else:
+        with path.open("rb") as handle:
+            for file_entry in ijson.items(handle, "files.item"):
+                yield _build_doc(file_entry)
+                count += 1
+
+    if count == 0:
+        yield _build_doc(None)
 
 
 def scan_and_index(
@@ -108,11 +161,14 @@ def scan_and_index(
                 count = sum(1 for _ in gen_docs())
                 print(f"     (dry-run) parsed {count} docs")
             else:
+                effective_batch = REPO_BLAME_BATCH_SIZE if filename == "repo_blame.json" else batch_size
                 ok, fail = es.bulk_index(
                     index=target_index,
-                    docs=gen_docs(),
+                    docs=iter_repo_blame_docs(file_path, repo_name)
+                    if filename == "repo_blame.json"
+                    else gen_docs(),
                     id_func=id_fn,
-                    batch_size=batch_size,
+                    batch_size=effective_batch,
                 )
                 print(f"     indexed: ok={ok} fail={fail}")
                 total_ok += ok
@@ -126,5 +182,6 @@ __all__ = [
     "folder_repo_name",
     "ensure_repo_name_field",
     "iter_json",
+    "iter_repo_blame_docs",
     "scan_and_index",
 ]

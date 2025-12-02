@@ -4,6 +4,8 @@ Run with:
     pytest tests/test_index_schema.py --maxfail=1 -v --cov=src.indexing.schema --cov-report=term-missing
 """
 
+import hashlib
+
 from src.indexing import schema
 
 
@@ -27,3 +29,7 @@ def test_id_helpers_use_repo_metadata():
 
     blame = {"repo_name": "o/r", "ref": "main"}
     assert schema.id_repo_blame(blame) == "o/r#blame#main"
+
+    blame_file = {"repo_name": "o/r", "ref": "main", "files": [{"path": "src/a.py"}]}
+    digest = hashlib.sha1("o/r:main:src/a.py".encode("utf-8")).hexdigest()
+    assert schema.id_repo_blame(blame_file) == f"o/r#blame#main#file#{digest}"

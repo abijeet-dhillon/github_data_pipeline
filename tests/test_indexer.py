@@ -47,3 +47,25 @@ def test_scan_and_index_invokes_bulk(tmp_path, monkeypatch):
 
     mock_es.ensure_index.assert_called_once_with("pref_issues", {})
     mock_es.bulk_index.assert_called_once()
+
+
+def test_iter_repo_blame_docs_splits_files(tmp_path):
+    blame_file = tmp_path / "owner_repo" / "repo_blame.json"
+    blame_file.parent.mkdir()
+    payload = {
+        "repo_name": "owner/repo",
+        "ref": "main",
+        "generated_at": "2024-01-01T00:00:00Z",
+        "head_commit_sha": "abc",
+        "files": [
+            {"path": "a.txt", "ranges_count": 1, "authors": []},
+            {"path": "dir/b.txt", "ranges_count": 2, "authors": []},
+        ],
+    }
+    blame_file.write_text(json.dumps(payload))
+
+    docs = list(indexer.iter_repo_blame_docs(blame_file, "owner/repo"))
+    assert len(docs) == 2
+    assert all(len(doc["files"]) == 1 for doc in docs)
+    assert {doc["files"][0]["path"] for doc in docs} == {"a.txt", "dir/b.txt"}
+    assert all(doc["generated_at"] == "2024-01-01T00:00:00Z" for doc in docs)

@@ -344,7 +344,18 @@ def id_cross_repo_links(doc: Dict[str, Any]) -> Optional[str]:
 def id_repo_blame(doc: Dict[str, Any]) -> Optional[str]:
     repo_name = doc.get("repo_name")
     ref = doc.get("ref")
-    return f"{repo_name}#blame#{ref}" if repo_name and ref else stable_hash_id(doc, "blame:")
+    files = doc.get("files") or []
+    if repo_name and ref:
+        if len(files) == 1 and isinstance(files[0], dict):
+            path = files[0].get("path")
+            if path:
+                digest = hashlib.sha1(f"{repo_name}:{ref}:{path}".encode("utf-8")).hexdigest()
+                return f"{repo_name}#blame#{ref}#file#{digest}"
+        chunk_id = doc.get("chunk_id")
+        if chunk_id is not None:
+            return f"{repo_name}#blame#{ref}#chunk#{chunk_id}"
+        return f"{repo_name}#blame#{ref}"
+    return stable_hash_id(doc, "blame:")
 
 
 def id_contributors(doc: Dict[str, Any]) -> Optional[str]:

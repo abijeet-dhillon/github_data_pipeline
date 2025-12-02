@@ -23,10 +23,28 @@ In this report the student should write their progress update. Please organize y
 
 ## Action Items
 
-- [ ] Deploy the pipeline to the lab workstation and verify that it runs reliably in the target environment.
-- [ ] Create three well-scoped, complex user stories that capture cross-repo workflows, issue–PR relationships, and meaningful research-driven insights to establish the system’s functional boundaries and capabilities.
+- [x] Deploy the pipeline to the lab workstation and verify that it runs reliably in the target environment.
+- [x] Create two well-scoped, complex user stories that capture cross-repo workflows, issue–PR relationships, and meaningful research-driven insights to establish the system’s functional boundaries and capabilities.
 
 # COSC 448 - Summary (Week 14)
+
+**[GitHub Data Pipeline Repository](https://github.com/abijeet-dhillon/github_data_pipeline/tree/main)**
+
+### 1. **Pipeline deployment and indexing validation**
+
+- Deployed the full retrieval and indexing pipeline on the lab workstation on Thursday, then revisited it Monday to validate the end-to-end run.
+- Confirmed that **13/15 repositories** were successfully pulled and their JSON artifacts copied back to my local laptop for analysis. The pipeline was still running, pulling the 14th repository's data on Monday.
+- Ran the indexing workflow locally over the exported data and verified that roughly **1.2 million documents** were indexed into Elasticsearch across all entity indices.
+- Identified a bulk indexing issue affecting `repo_blame` documents for a few large repositories; updated the indexing component to stream and split these payloads safely. Pushed this fix to the repository today and re-ran indexing locally with the data pulled by the lab computer to confirm the problem is now resolved.
+
+### 2. **User stories and ES|QL exploration**
+
+- Authored **two complex user stories** to probe the limits of the current pipeline and analytics stack:
+  - **Cross-repo dependency health:** Uses the `cross_repo_links` index to analyze how often external projects reference a given repository (e.g., micromatch), with ES|QL queries and aggregations over `source` and `target` fields.
+  - **Issue/PR backlog and risk triage:** Uses `prs_with_linked_issues` and `issues_closed_by_commits` to surface multi-issue PRs, long-open issues, and issues closed by multiple commits without relying on joins.
+- Documented both stories and their supporting ES|QL queries in `docs/user_stories.md`, linking fields and indices back to the concrete JSON outputs under `output/{owner_repo}/` so future analysis can build directly on this work.
+
+---
 
 ---
 
