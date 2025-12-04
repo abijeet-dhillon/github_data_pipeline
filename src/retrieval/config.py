@@ -29,21 +29,21 @@ MAX_PRS_WITH_LINKED_ISSUES = int(os.getenv("MAX_PRS_WITH_LINKED_ISSUES", "0"))  
 MAX_PAGES_PRS = int(os.getenv("MAX_PAGES_PRS", "0"))  # 0 = no cap
 
 REPOS = [
-    "micromatch/micromatch"
-    # "laravel-mix/laravel-mix",
-    # "standard/standard",
-    # "istanbuljs/nyc",
-    # "axios/axios",
-    # "reduxjs/redux",
-    # "rollup/rollup",
-    # "apache/spark",
-    # "grafana/grafana",
-    # "pandas-dev/pandas",
-    # "django/django",
-    # "prettier/prettier",
-    # "numpy/numpy",
-    # "flutter/flutter",
-    # "torvalds/linux"
+    "micromatch/micromatch",
+    "laravel-mix/laravel-mix",
+    "standard/standard",
+    "istanbuljs/nyc",
+    "axios/axios",
+    "reduxjs/redux",
+    "rollup/rollup",
+    "apache/spark",
+    "grafana/grafana",
+    "pandas-dev/pandas",
+    "django/django",
+    "prettier/prettier",
+    "numpy/numpy",
+    "flutter/flutter",
+    "torvalds/linux"
 ]
 
 __all__ = [
